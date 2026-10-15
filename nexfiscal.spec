@@ -14,7 +14,7 @@ a = Analysis(
     datas=datas,
     binaries=binaries,
     hiddenimports=hiddenimports + ["nexfiscal.ui.main_window", "nexfiscal.controller"],
-    excludes=["tkinter", "matplotlib", "pandas", "numpy", "scipy", "pytest", "IPython",
+    excludes=["tkinter", "matplotlib", "numpy", "scipy", "pytest", "IPython",
               "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.Qt3DCore",
               "PySide6.QtQuick", "PySide6.QtQml", "PySide6.QtMultimedia", "PySide6.QtCharts"],
     noarchive=False,
