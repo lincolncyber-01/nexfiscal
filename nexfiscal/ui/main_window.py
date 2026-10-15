@@ -47,6 +47,7 @@ class MainWindow(QMainWindow):
     def _home_page(self) -> QWidget:
         w = QWidget()
         s = self.ctx.settings
+        title = QLabel(f"<b>{APP_NAME}</b>")
         title.setAlignment(Qt.AlignCenter)
         self.sheet = QLineEdit()
         self.sheet.setReadOnly(True)
@@ -184,7 +185,7 @@ class MainWindow(QMainWindow):
         self.d_city, self.d_company = QLabel("-"), QLabel("-")
         self.d_comp, self.d_step = QLabel("-"), QLabel("-")
         for label, widget in (("Cidade:", self.d_city), ("Empresa:", self.d_company),
-                              ("Competência:", self.d_comp), ("Etapa atual:", self.d_step)):
+                            ("Competência:", self.d_comp), ("Etapa atual:", self.d_step)):
             row = QHBoxLayout()
             row.addWidget(QLabel(f"<b>{label}</b>"))
             row.addWidget(widget, 1)
@@ -242,8 +243,8 @@ class MainWindow(QMainWindow):
 
     def _update_counts(self, done: int) -> None:
         pending = max(self.total - done, 0)
-        self.d_counts.setText(f"Concluídas: {self.counts['ok']}   Com pendência: {self.counts['pend']}   "
-                              f"Pendentes: {pending}   Erros: {self.counts['err']}")
+        self.d_counts.setText(f"Concluídas: {self.counts['ok']}    Com pendência: {self.counts['pend']}    "
+                            f"Pendentes: {pending}    Erros: {self.counts['err']}")
 
     def on_event(self, ev: ProgressEvent) -> None:
         if ev.kind is EventKind.CITY_START:
