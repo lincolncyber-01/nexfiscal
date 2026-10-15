@@ -15,10 +15,6 @@ jobs:
       - name: Instalar dependencias
         timeout-minutes: 10
         run: pip install -r requirements.txt pyinstaller
-      - name: Testes rapidos (nao bloqueiam o pacote)
-        timeout-minutes: 5
-        continue-on-error: true
-        # run: python -m pytest -q -x -k "not e2e and not captcha and not recognizes and not assisted"
       - name: Gerar executavel
         timeout-minutes: 20
         run: pyinstaller --noconfirm --clean nexfiscal.spec
