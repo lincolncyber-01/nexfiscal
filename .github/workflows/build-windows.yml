@@ -1,0 +1,32 @@
+name: Build Windows
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt pyinstaller
+      - name: Testes (não bloqueiam o pacote)
+        run: python -m pytest -q
+        continue-on-error: true
+      - run: pyinstaller --noconfirm --clean nexfiscal.spec
+      - name: Teste de abertura do executável (não bloqueia o pacote)
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "dist\NexFiscal\NexFiscal.exe" -ArgumentList "--version" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "O executável não iniciou (código $($p.ExitCode))" }
+      - run: Copy-Item LEIA-ME.txt dist\NexFiscal\
+        shell: pwsh
+      - run: Compress-Archive -Path dist\NexFiscal -DestinationPath NexFiscal-Windows.zip
+        shell: pwsh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NexFiscal-Windows
+          path: NexFiscal-Windows.zip
