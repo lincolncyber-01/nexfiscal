@@ -1,0 +1,13 @@
+NexFiscal
+=========
+
+Como usar:
+1. Execute o arquivo NexFiscal.exe (ou main.py, dependendo do pacote).
+2. Configure as credenciais de acesso ao portal fiscal em config/.
+3. Os relatórios gerados ficam salvos na pasta reports/.
+
+Requisitos:
+- Windows 10 ou superior
+- Conexão com a internet para acesso aos portais fiscais
+
+Versão: 1.0.0
