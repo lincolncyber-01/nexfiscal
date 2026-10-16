@@ -15,6 +15,11 @@ jobs:
       - name: Instalar dependencias
         timeout-minutes: 10
         run: pip install -r requirements.txt pyinstaller
+      - name: Instalar navegador do Playwright
+        timeout-minutes: 10
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: "0"
+        run: playwright install chromium
       - name: Gerar executavel
         timeout-minutes: 20
         run: pyinstaller --noconfirm --clean nexfiscal.spec
