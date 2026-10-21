@@ -69,6 +69,10 @@ class LoginHandler:
             if entry is not None:
                 self.pm.click(entry, "link de acesso")
         self._remember_signature()
+        if self.recognizer.mode == "reconhecimento":
+            banner = f"[STATUS: APRENDIZADO GUIADO ATIVO PARA: {url}]"
+            log.info(banner)
+            self.reporter.stage(Stage.LOGIN, StepStatus.EM_ANDAMENTO, banner)
         self.recognizer.probe_login(self.engine, self.gate.detector)
 
         numeric_user = bool(re.fullmatch(r"[\d.\-/\s]+", user.strip()))
@@ -76,18 +80,21 @@ class LoginHandler:
         for attempt in range(1, 4):
             self.pm.checkpoint()
             self._fill_credentials(user, password, numeric_user)
-            self._wait_captcha()
+            captcha_handled = self._wait_captcha()
             if self.is_logged_in(login_url):  # o usuário já enviou o formulário
                 break
-            if self._password_visible():
-                if self._captcha_seen:
-                    # REGRA CRÍTICA DE SEGURANÇA: depois que o CAPTCHA aparece e é
-                    # resolvido, a automação NUNCA clica no botão de acesso (nem por
-                    # clique, nem por Enter). Só um humano pode concluir o login.
-                    self._wait_human_submit(login_url)
-                else:
+            if captcha_handled:
+                # Requisito crítico de segurança: depois que um CAPTCHA aparece e é resolvido,
+                # a automação NUNCA clica no botão de login ("Acessar"/"Entrar") — só um humano
+                # pode. A partir daqui apenas observamos o portal até a pessoa confirmar o acesso.
+                log.info("CAPTCHA resolvido: aguardando o operador clicar em Acessar/Entrar manualmente.")
+                self.reporter.stage(Stage.LOGIN, StepStatus.EM_ANDAMENTO,
+                                    "CAPTCHA resolvido — aguardando o operador confirmar o acesso")
+                outcome = self._wait_outcome(login_url, wait=self.settings.captcha_timeout_seconds)
+            else:
+                if self._password_visible():
                     self._submit()
-            outcome = self._wait_outcome(login_url)
+                outcome = self._wait_outcome(login_url)
             if outcome == "ok":
                 break
             if outcome == "captcha":
@@ -103,10 +110,15 @@ class LoginHandler:
         self.pm.settle()
         return self.page.url
 
-    def _wait_captcha(self) -> None:
+    def _wait_captcha(self) -> bool:
+        """Aguarda a resolução manual de um CAPTCHA, se houver. Devolve True se um CAPTCHA
+        apareceu e foi resolvido nesta rodada — sinal para NUNCA clicar no botão de login
+        em seguida (só o operador humano pode avançar depois do CAPTCHA)."""
         if self.gate.wait_if_present(self._label, self._city):
             self._captcha_seen = True
             self.reporter.stage(Stage.CAPTCHA, StepStatus.OK, "Resolvido manualmente")
+            return True
+        return False
 
     def _remember_signature(self) -> None:
         profile = self.engine.profile
@@ -133,39 +145,6 @@ class LoginHandler:
         except ElementNotFoundError:
             self.page.keyboard.press("Enter")  # último recurso: Enter no campo de senha
             self.pm.settle()
-
-    def _wait_human_submit(self, login_url: str) -> None:
-        """Barreira humana obrigatória pós-CAPTCHA.
-
-        Depois que um CAPTCHA foi exibido e resolvido nesta tentativa de login, esta
-        automação NÃO chama ``_submit()`` em hipótese alguma — nem clique no botão,
-        nem Enter de último recurso. A automação apenas aguarda, passivamente, uma
-        mudança de estado na página (login concluído, ou erro/novo CAPTCHA relatado
-        pelo próprio portal) que só pode ocorrer depois que um humano clicar em
-        'Acessar' manualmente no navegador.
-        """
-        msg = (f"CAPTCHA resolvido — Empresa: {self._label} | Cidade: {self._city} | "
-               "Clique em 'Acessar' manualmente no navegador para continuar. "
-               "[AGUARDANDO CLIQUE HUMANO...]")
-        log.info("CAPTCHA resolvido (empresa=%s, cidade=%s). A automação NÃO vai clicar "
-                 "em 'Acessar' — aguardando ação manual humana.", self._label, self._city)
-        self.reporter.assist(msg)
-        try:
-            self.page.bring_to_front()
-        except PlaywrightError:
-            pass
-        deadline = time.monotonic() + self.settings.captcha_timeout_seconds
-        while time.monotonic() < deadline:
-            self.pm.checkpoint()
-            if self.is_logged_in(login_url):
-                return
-            if self.pm.contains_any(pc.LOGIN_ERROR_PATTERNS) or self.pm.contains_any(pc.CAPTCHA_ERROR_PATTERNS):
-                return  # deixa o _wait_outcome() tratar o erro / um novo CAPTCHA
-            self.page.wait_for_timeout(500)
-        raise PortalTimeoutError(
-            f"CAPTCHA resolvido, mas ninguém clicou em 'Acessar' em até "
-            f"{self.settings.captcha_timeout_seconds}s. A automação não clica nesse botão "
-            "por regra de segurança — é necessária ação manual.", stage="login")
 
     def _wait_outcome(self, login_url: str, wait: float = 20.0) -> str:
         """'ok' | 'captcha' | 'invalid'."""
