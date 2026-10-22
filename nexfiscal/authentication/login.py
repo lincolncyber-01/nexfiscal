@@ -79,6 +79,9 @@ class LoginHandler:
                 self.page.wait_for_timeout(400)
             else:
                 raise PortalTimeoutError("O operador não abriu manualmente o portal correto durante o aprendizado guiado.", stage="login")
+            # Detectar e sinalizar CAPTCHA assim que o operador abrir o portal,
+            # antes de solicitar qualquer interação com os campos de login.
+            self._wait_captcha()
         else:
             self.pm.goto(url)
         user_field = self.engine.find(pc.USER_FIELD, timeout=4, required=False)
