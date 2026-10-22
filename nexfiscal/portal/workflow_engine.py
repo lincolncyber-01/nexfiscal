@@ -199,8 +199,8 @@ class CompanyWorkflow:
                 for event in self.action_recorder.drain()
             ]
             events = [event for event in events if event["url"].startswith(("http://", "https://"))]
-        except PlaywrightError:
-            log.warning("Não foi possível coletar eventos guiados; a execução segue sem gravar esta sessão.")
+        except Exception:
+            log.warning("Não foi possível coletar eventos guiados; a execução segue sem gravar esta sessão.", exc_info=True)
             return
         if not events:
             return
