@@ -35,6 +35,7 @@ class Settings(BaseModel):
     headless: bool = False                 # CAPTCHA exige navegador visível
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     save_error_screenshots: bool = False   # capturas (com campos mascarados) em erros
+    guided_learning: bool = True           # não descobre automaticamente elementos novos de um portal/etapa
     assisted_recognition: bool = False     # pede um clique do usuário quando não reconhece um elemento
     assist_timeout_seconds: int = Field(180, ge=5, le=3600)
     enable_ocr: bool = False               # fallback experimental (requer pytesseract)
