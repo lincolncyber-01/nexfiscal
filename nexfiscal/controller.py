@@ -13,7 +13,7 @@ from .database.models import CompanyRow, CompanyRun, RunStatus, Stage, StepStatu
 from .database.repositories import CompanyRepository, ExecutionRepository
 from .dates import Period
 from .events import CompanyReporter, EventBus, EventKind, ProgressEvent, RunControl
-from .exceptions import CancelledError, NexFiscalError, PortalNotRegisteredError
+from .exceptions import CancelledError, ConfigurationError, NexFiscalError, PortalNotRegisteredError
 from .logs.logger import SECRETS
 from .memory.portal_memory_manager import PortalMemoryManager
 from .portal.portal_registry import PortalRegistry
@@ -54,6 +54,10 @@ class BatchRunner:
         run_id = uuid.uuid4().hex[:8]
         comp = period.competence.label
         selected = [r for r in rows if not cities or r.cidade_norm in cities]
+        if any(not r.razao_social.strip() for r in selected):
+            raise ConfigurationError(
+                "Razão social ausente. Reimporte a planilha com a coluna 'Razão Social' antes de processar."
+            )
         for r in selected:
             SECRETS.register(r.password)
         self.companies.upsert_rows(selected)
