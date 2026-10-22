@@ -297,7 +297,7 @@ class CompanyWorkflow:
         # ------------------------------------------------------ organização ---
         try:
             OutputLayout.write_manifest(paths, {
-                "empresa": self.cnpj, "cidade": self.row.cidade,
+                "empresa": self.cnpj, "razao_social": self.row.razao_social, "cidade": self.row.cidade,
                 "competencia": self.period.competence.label,
                 "periodo": f"{self.period.start_br} a {self.period.end_br}",
                 "xml": {"encontrados": out.xml.found, "baixados": out.xml.downloaded,
