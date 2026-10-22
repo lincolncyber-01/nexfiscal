@@ -87,11 +87,10 @@ ROOT/                                  (única pasta configurável)
 └── Salvador/
     └── RAZÃO SOCIAL COMPLETA DA EMPRESA LTDA/
         ├── nome-original-do-portal.xml
-        ├── Livro Fiscal.pdf
-        └── _resumo.json               (resumo de execução, sem senhas)
+        └── Livro Fiscal.pdf
 ```
 
-A estrutura é sempre ROOT/Cidade/Razão Social. O nome da cidade e a razão social são preservados como nomes de pasta, removendo apenas caracteres inválidos no sistema de arquivos. Não são criadas subpastas por competência, tipo de arquivo ou portal. Os nomes originais dos XMLs e do Livro Fiscal são preservados. XML existente **e válido** não é baixado de novo; se estiver corrompido/incompleto, é baixado outra vez. Para bancos antigos, reimporte a planilha com a coluna RAZÃO SOCIAL antes de retomar o processamento.
+A estrutura é sempre ROOT/Cidade/Razão Social. O nome da cidade e a razão social são preservados como nomes de pasta, removendo apenas caracteres inválidos no sistema de arquivos. Não são criadas subpastas por competência, tipo de arquivo ou portal. A pasta da empresa contém os arquivos fiscais baixados; resumos de execução ficam separados em `~/.nexfiscal/logs/manifests`. Os nomes dos XMLs e do Livro Fiscal são preservados conforme os nomes produzidos pelo fluxo de download. XML existente **e válido** não é baixado de novo; se estiver corrompido/incompleto, é baixado outra vez. Para bancos antigos, reimporte a planilha com a coluna RAZÃO SOCIAL antes de retomar o processamento.
 
 ## Funcionamento da memória dos portais
 
