@@ -163,7 +163,10 @@ class XmlDownloader:
             path.unlink(missing_ok=True)
             raise InvalidFileError(f"XML inválido: {info.reason}")
         stats.found += 1
-        base = f"NFSe_{sanitize_name(info.numero)}" if info.numero else f"NFSe_{info.sha256[:12]}"
+        if info.is_consulta_sem_notas:
+            base = f"Resposta_Consulta_NFSe_Sem_Notas_{info.sha256[:12]}"
+        else:
+            base = f"NFSe_{sanitize_name(info.numero)}" if info.numero else f"NFSe_{info.sha256[:12]}"
         target = dest / f"{base}.xml"
         if target.exists() and self.settings.existing_files == "skip_valid":
             if self.validator.validate_file(target).valid:
