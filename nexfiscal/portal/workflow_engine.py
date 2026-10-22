@@ -81,7 +81,7 @@ class CompanyWorkflow:
             assisted=settings.assisted_recognition and not settings.headless,
             assist_timeout=settings.assist_timeout_seconds,
             on_assist=lambda _spec, msg: reporter.assist(f"{row.display} ({row.cidade}): {msg}"),
-            control=control)
+            control=control, guided_learning=settings.guided_learning)
         self.dm = DownloadManager(settings.tmp_dir, settings.download_timeout_seconds)
         self.login_handler = LoginHandler(page, self.engine, self.pm, settings, reporter, control)
         self.steps: dict[str, str] = dict(previous.steps)
