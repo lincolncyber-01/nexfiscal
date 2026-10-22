@@ -72,7 +72,8 @@ def sanitize_name(name: str, replacement: str = "-") -> str:
     cleaned = _INVALID_FS_CHARS.sub(replacement, name or "").strip().strip(".")
     cleaned = re.sub(r"\s+", " ", cleaned)
     reserved = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)),
-                *(f"lpt{i}" for i in range(1, 10))}
+                *(f"lpt{i}" for i in range(1, 10)}
+                }
     if cleaned.lower() in reserved:
         cleaned = f"_{cleaned}"
     return cleaned or "_"
@@ -84,8 +85,13 @@ def city_folder_name(city: str) -> str:
     return sanitize_name(base, "-")
 
 
+def company_folder_name(razao_social: str) -> str:
+    """Preserva a razão social legível, removendo apenas caracteres inválidos no sistema de arquivos."""
+    return sanitize_name(re.sub(r"\s+", " ", (razao_social or "").strip()), "-")
+
+
 def cnpj_folder_name(cnpj_usuario: str) -> str:
-    """'12.345.678/0001-01' -> '12.345.678-0001-01'."""
+    """'12.345.678/0001-01' -> '12.345.678-0001-01' (compatibilidade legada)."""
     return sanitize_name(format_cnpj(cnpj_usuario).replace("/", "-"), "-")
 
 
