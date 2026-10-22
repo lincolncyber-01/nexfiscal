@@ -17,7 +17,7 @@ from ..events import CompanyReporter
 from ..exceptions import (DownloadError, InvalidFileError, NexFiscalError, SessionExpiredError,
                           TemporaryError)
 from ..portal.selector_engine import SelectorEngine
-from ..storage.file_manager import detect_kind, move_atomic, read_head, sha256_file
+from ..storage.file_manager import detect_kind, ensure_dir, move_atomic, read_head, sha256_file
 from ..utils import normalize_text, sanitize_name
 from .xml_validator import XmlInfo, XmlValidator
 
@@ -88,6 +88,10 @@ class XmlDownloader:
 
     # ---------------------------------------------------------------- fluxo ---
     def run(self, dest: Path) -> XmlStats:
+        # Cria e valida a pasta final antes de clicar em qualquer link de download.
+        # O arquivo capturado pelo Playwright fica temporário; só conta como baixado
+        # depois de movido e confirmado neste diretório da empresa.
+        ensure_dir(dest)
         stats = XmlStats()
         index = self._index_existing(dest)
         last_signature = None
@@ -169,6 +173,8 @@ class XmlDownloader:
                     path.unlink(missing_ok=True)
                     return
         move_atomic(path, target)  # conteúdo original, sem modificação
+        if not target.is_file() or target.stat().st_size == 0:
+            raise InvalidFileError(f"O XML não foi gravado no destino configurado: {target}")
         stats.downloaded += 1
         stats.files.append(target)
         if info.numero:
