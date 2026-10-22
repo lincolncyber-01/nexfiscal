@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from ..config.settings import data_dir
 from ..dates import Competence
 from ..utils import city_folder_name, company_folder_name
 from .file_manager import ensure_dir
@@ -35,8 +36,13 @@ class OutputLayout:
 
     @staticmethod
     def write_manifest(paths: CompanyPaths, data: dict) -> Path:
-        """Resumo do processamento (nunca contém senha), salvo junto aos arquivos fiscais."""
+        """Salva o resumo fora da pasta fiscal para manter nela apenas os arquivos baixados."""
         payload = {"gerado_em": datetime.now().isoformat(timespec="seconds"), **data}
-        target = paths.competence_dir / "_resumo.json"
+        folder = data_dir() / "logs" / "manifests"
+        folder.mkdir(parents=True, exist_ok=True)
+        city = city_folder_name(str(data.get("cidade") or "cidade"))
+        company = company_folder_name(str(data.get("razao_social") or data.get("empresa") or "empresa"))
+        competence = str(data.get("competencia") or "sem-competencia").replace("/", "-")
+        target = folder / f"{city}--{company}--{competence}.json"
         target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), "utf-8")
         return target
