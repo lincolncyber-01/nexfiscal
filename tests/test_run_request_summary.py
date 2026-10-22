@@ -16,14 +16,14 @@ def test_run_request_summary_lists_scope_and_destination():
     )
 
     summary = build_run_request_summary(
-        {"Salvador"}, rows, period, r"C:\\Fiscal"
+        {"Salvador"}, rows, period, r"C:\Fiscal"
     )
 
     assert "Cidades (1):" in summary
     assert "Salvador" in summary
     assert "Empresas a processar: 2" in summary
     assert "09/2026 (01/09/2026 a 30/09/2026)" in summary
-    assert r"C:\\Fiscal" in summary
+    assert r"C:\Fiscal" in summary
     assert "navegador só será aberto após sua confirmação" in summary
 
 
