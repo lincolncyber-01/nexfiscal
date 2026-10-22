@@ -15,10 +15,16 @@ O modo `guided_learning` fica habilitado por padrão.
 
 A opção fica em `Settings.guided_learning` e é persistida no arquivo de configurações JSON do NexFiscal. O status do aprendizado guiado é enviado à interface pelo canal de assistência.
 
-## Limitações a validar
+## Persistência e reutilização
 
-O modo impede descoberta automática de seletores; ele não grava por si só cada clique como um evento de baixo nível. A memória atual persiste estratégias de seletores por etapa e chave. A captura completa de sequências de ações (tipo de evento, ordem e parâmetros não sensíveis) deve ser tratada como uma etapa adicional antes de considerar o requisito de gravação de roteiro integralmente atendido.
+- Os seletores confirmados são persistidos por portal, etapa e elemento lógico; as execuções futuras tentam esses seletores antes de pedir orientação.
+- O gravador registra eventos observados em cada rota e persiste o último conjunto de eventos daquela rota na memória SQLite do portal. As rotas não visitadas continuam preservadas.
+- O registro atravessa navegações da mesma sessão por meio de uma ligação direta entre o documento e o processo Python; query strings, fragmentos e credenciais embutidas na URL não são armazenados.
+- O registro de eventos é uma trilha estruturada de observação, não um script bruto de replay. O NexFiscal usa seus fluxos fiscais tipados para preencher credenciais, competências, executar downloads e validar arquivos. Reproduzir cliques cegamente seria inseguro (poderia submeter formulários ou repetir downloads) e os valores de campos são intencionalmente omitidos.
+- Se um seletor salvo falhar, o motor não tenta descobrir substitutos automaticamente no modo guiado. A etapa falha de forma controlada ou solicita seleção assistida conforme a configuração; a execução não deve ser considerada concluída só porque existe um registro de eventos.
 
+A tabela portal_flows armazena os eventos como strings JSON, preservando a compatibilidade com a estrutura SQLite existente.
+A opção Settings.guided_learning controla esse comportamento e permanece habilitada por padrão.
 
 ## Registro estruturado de ações guiadas
 
@@ -28,8 +34,13 @@ URL sem query/fragmento, seletor candidato, tipo do controle e rótulo. **Valore
 não são registrados**; eventos de entrada em campos sensíveis são ignorados. Isso evita
 persistir senhas, tokens ou dados de formulário acidentalmente.
 
-A captura é uma base para o roteiro; ainda não significa que o fluxo seja reproduzido
-automaticamente. Antes de conectar a gravação ao ciclo completo, é necessário definir a
-aprovação explícita do roteiro, a configuração de parâmetros variáveis e a política de
-reprodução segura de downloads/CAPTCHA. A tabela `portal_flows` já aceita lista de strings
-JSON, então `serialize()` mantém compatibilidade com o armazenamento existente.
+Os eventos são coletados durante a execução do CompanyWorkflow e persistidos ao final,
+inclusive em falhas e cancelamentos, separados por rota e vinculados ao perfil do portal.
+A tabela portal_flows armazena os eventos como strings JSON.
+
+O registro não é reproduzido como uma sequência cega de cliques. O NexFiscal usa os
+seletores aprendidos para executar o fluxo fiscal tipado, preenchendo credenciais e
+competências com os dados da execução, validando downloads e tratando CAPTCHA no fluxo
+manual existente. Reexecutar cliques gravados cegamente poderia submeter formulários ou
+duplicar operações; por isso, eventos são trilha estruturada, enquanto seletores confirmados
+são o mecanismo de reutilização automática.

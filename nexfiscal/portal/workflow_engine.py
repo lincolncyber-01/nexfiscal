@@ -36,6 +36,7 @@ from ..nfse.nfse_consult import NfseConsult
 from ..nfse.xml_downloader import XmlDownloader, XmlStats
 from ..storage.organizer import OutputLayout
 from .portal_memory import PortalProfile
+from .guided_action_recorder import GuidedActionRecorder
 from .selector_engine import SelectorEngine
 
 log = logging.getLogger("nexfiscal.workflow")
@@ -73,9 +74,13 @@ class CompanyWorkflow:
                  reporter: CompanyReporter, execs: ExecutionRepository, run_id: str,
                  control: RunControl | None = None) -> None:
         self.settings, self.page, self.portal, self.row = settings, page, portal, row
+        self.profile = profile
         self.previous, self.period, self.layout = previous, period, layout
         self.reporter, self.execs, self.run_id, self.control = reporter, execs, run_id, control
         self.pm = PageManager(page, settings, control)
+        self.action_recorder = GuidedActionRecorder(page) if settings.guided_learning else None
+        if self.action_recorder is not None:
+            self.action_recorder.start()
         self.engine = SelectorEngine(
             page, profile, timeout=settings.timeout_seconds, enable_ocr=settings.enable_ocr,
             assisted=settings.assisted_recognition and not settings.headless,
@@ -179,6 +184,37 @@ class CompanyWorkflow:
             self._set(Stage.XML, StepStatus.OK, stats.summary)
 
     def execute(self) -> CompanyResult:
+        """Executa o fluxo e persiste observações guiadas mesmo em falha/cancelamento."""
+        try:
+            return self._execute()
+        finally:
+            self._persist_guided_actions()
+
+    def _persist_guided_actions(self) -> None:
+        if self.action_recorder is None:
+            return
+        try:
+            events = self.action_recorder.drain()
+        except PlaywrightError:
+            log.warning("Não foi possível coletar eventos guiados; a execução segue sem gravar esta sessão.")
+            return
+        if not events:
+            return
+        grouped: dict[str, list[dict]] = {}
+        for event in events:
+            url = event.get("url", "")
+            name = GuidedActionRecorder.flow_name(url)
+            if name:
+                grouped.setdefault(name, []).append(event)
+        for name, route_events in grouped.items():
+            # Cada rota guarda a última sessão observada, evitando crescimento ilimitado
+            # e mantendo as demais rotas já aprendidas para o mesmo portal.
+            normalized = []
+            for order, event in enumerate(route_events, start=1):
+                normalized.append(dict(event, order=order))
+            self.profile.set_flow(name, GuidedActionRecorder.serialize(normalized))
+
+    def _execute(self) -> CompanyResult:
         out = CompanyResult(RunStatus.EM_EXECUCAO, steps=self.steps)
         try:
             paths = self.layout.paths(self.row.cidade, self.row.cnpj_usuario, self.period.competence)
