@@ -54,6 +54,9 @@ def test_flow_name_is_scoped_to_web_route_and_ignores_query_fragment():
 
     assert name == "guided_actions_v1:portal.example/financeiro"
     assert "secret" not in name
+    assert GuidedActionRecorder.flow_name("https://portal.example:8443/login") == (
+        "guided_actions_v1:portal.example:8443/login"
+    )
 
 
 def test_recorder_receives_events_in_python_queue_across_navigation():
