@@ -40,8 +40,13 @@ _INSTALL_RECORDER = r"""
     return {type: 'css', value: parts.join(' > ')};
   }
   function label(el) {
-    return norm(el.getAttribute('aria-label') || el.getAttribute('placeholder') ||
-      el.getAttribute('title') || el.innerText || '');
+    const direct = el.getAttribute('aria-label') || el.getAttribute('placeholder') ||
+      el.getAttribute('title');
+    if (direct) return norm(direct);
+    if (el.labels && el.labels.length)
+      return norm(Array.from(el.labels).map(item => item.textContent || '').join(' '));
+    // Never read innerText or value: dynamic table/form text may contain fiscal data.
+    return '';
   }
   function record(event) {
     const el = event.target && event.target.closest &&
