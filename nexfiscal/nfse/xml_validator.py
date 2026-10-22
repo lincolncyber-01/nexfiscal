@@ -56,6 +56,24 @@ class XmlValidator:
             info.reason = f"XML malformado ou incompleto: {exc}"
             return info
 
+        # Alguns portais entregam a resposta da consulta como arquivo .xml,
+        # mesmo quando não há notas. Isso não é uma NFS-e e nunca deve ser salvo
+        # nem contado como XML fiscal baixado.
+        root_name = etree.QName(root).localname.casefold()
+        if root_name in {"consultarnfseservicoprestadoresposta",
+                         "consultarnfseservicotomadoresposta",
+                         "consultarnfseservicoprestadoresposta",
+                         "consultarnfseservicotomadoresposta"}:
+            messages = " ".join(t.strip() for t in root.itertext() if t and t.strip()).casefold()
+            if any(term in messages for term in (
+                "notas fiscais não localizadas", "notas fiscais nao localizadas",
+                "nenhuma nota", "nenhuma nfse", "nenhuma nfs-e",
+            )):
+                info.reason = "O portal retornou a resposta da consulta: NOTAS FISCAIS NÃO LOCALIZADAS. Não é um XML fiscal de nota."
+            else:
+                info.reason = f"O portal retornou uma resposta de consulta ({root_name}), não um XML fiscal de nota."
+            return info
+
         inf = f".//{_ln('InfNfse')}"
         info.quantidade_notas = len(root.xpath(inf)) or len(root.xpath(f"//{_ln('Nfse')}")) or 1
         info.numero = _first(root, f"{inf}/{_ln('Numero')}", f".//{_ln('Numero')}",
