@@ -135,6 +135,10 @@ class XmlDownloader:
                 log.warning("XML: tentativa %d/%d falhou: %s", attempt, self.settings.max_retries, last_error)
                 if self._session_lost():  # a falha é a sessão caída: refazer login, não insistir
                     raise SessionExpiredError("A sessão do portal expirou durante o download dos XMLs.") from exc
+                # Resposta de consulta sem notas é um resultado funcional, não falha transitória.
+                # Não repetir o mesmo clique/download três vezes.
+                if "NOTAS FISCAIS NÃO LOCALIZADAS" in last_error:
+                    break
                 self.pm.pause(2.0)
             except NexFiscalError as exc:
                 last_error = exc.message
@@ -159,7 +163,10 @@ class XmlDownloader:
             path.unlink(missing_ok=True)
             raise InvalidFileError(f"XML inválido: {info.reason}")
         stats.found += 1
-        base = f"NFSe_{sanitize_name(info.numero)}" if info.numero else f"NFSe_{info.sha256[:12]}"
+        if info.is_consulta_sem_notas:
+            base = f"Resposta_Consulta_NFSe_Sem_Notas_{info.sha256[:12]}"
+        else:
+            base = f"NFSe_{sanitize_name(info.numero)}" if info.numero else f"NFSe_{info.sha256[:12]}"
         target = dest / f"{base}.xml"
         if target.exists() and self.settings.existing_files == "skip_valid":
             if self.validator.validate_file(target).valid:
