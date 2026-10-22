@@ -27,12 +27,12 @@ class CompanyRepository:
         with self.db.transaction():
             for r in rows:
                 self.db.execute(
-                    """INSERT INTO companies (usuario_key, cnpj_usuario, cidade, cidade_norm, senha_enc)
-                       VALUES (?,?,?,?,?)
+                    """INSERT INTO companies (usuario_key, cnpj_usuario, razao_social, cidade, cidade_norm, senha_enc)
+                       VALUES (?,?,?,?,?,?)
                        ON CONFLICT(usuario_key, cidade_norm) DO UPDATE SET
-                         cnpj_usuario=excluded.cnpj_usuario, cidade=excluded.cidade,
-                         senha_enc=excluded.senha_enc""",
-                    (r.usuario_key, r.cnpj_usuario, r.cidade, r.cidade_norm,
+                         cnpj_usuario=excluded.cnpj_usuario, razao_social=excluded.razao_social,
+                         cidade=excluded.cidade, senha_enc=excluded.senha_enc""",
+                    (r.usuario_key, r.cnpj_usuario, r.razao_social.strip(), r.cidade, r.cidade_norm,
                      self.cipher.encrypt(r.password)),
                 )
 
@@ -44,8 +44,10 @@ class CompanyRepository:
                 continue
             if cities_norm and row["cidade_norm"] not in cities_norm:
                 continue
-            out.append(CompanyRow(row_number=i, cnpj_usuario=row["cnpj_usuario"],
-                                  senha=self.cipher.decrypt(row["senha_enc"]), cidade=row["cidade"]))
+            out.append(CompanyRow(
+                row_number=i, cnpj_usuario=row["cnpj_usuario"], razao_social=row["razao_social"],
+                senha=self.cipher.decrypt(row["senha_enc"]), cidade=row["cidade"]
+            ))
         return out
 
     def set_status(self, usuario_key: str, cidade_norm: str, status: RunStatus) -> None:
@@ -203,7 +205,6 @@ class ExecutionRepository:
     def __init__(self, db: Database) -> None:
         self.db = db
 
-    # histórico detalhado
     def log(self, run_id: str, empresa: str, cidade: str, competencia: str, etapa: str,
             status: str, mensagem: str = "", arquivo: str = "", erro: str = "") -> None:
         self.db.execute(
@@ -212,7 +213,6 @@ class ExecutionRepository:
                VALUES (?,?,?,?,?,?,?,?,?,?)""",
             (run_id, empresa, cidade, competencia, etapa, status, now_iso(), mensagem, arquivo, erro))
 
-    # estado por empresa
     def _to_run(self, r: sqlite3.Row) -> CompanyRun:
         return CompanyRun(
             r["id"], r["competencia"], r["usuario_key"], r["cnpj_usuario"], r["cidade"],
