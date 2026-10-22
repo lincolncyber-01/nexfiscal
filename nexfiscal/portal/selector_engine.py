@@ -467,10 +467,11 @@ class SelectorEngine:
     def __init__(self, page: Page, profile: PortalProfile | None = None, *, timeout: float = 30,
                  poll: float = 0.7, enable_ocr: bool = False, assisted: bool = False,
                  assist_timeout: float = 180, on_assist: Callable[[ElementSpec, str], None] | None = None,
-                 control: Any = None) -> None:
+                 control: Any = None, guided_learning: bool = True) -> None:
         self.page, self.profile = page, profile
         self.timeout, self.poll, self.enable_ocr = timeout, poll, enable_ocr
         self.assisted, self.assist_timeout = assisted, assist_timeout
+        self.guided_learning = guided_learning
         self.on_assist, self.control = on_assist, control
 
     # ------------------------------------------------------------ DOM ----
@@ -556,9 +557,10 @@ class SelectorEngine:
     # ---------------------------------------------------- modo assistido ----
     def _assist(self, spec: ElementSpec) -> FoundElement | None:
         """Pede ao usuário que clique no elemento (aprendizado assistido)."""
-        if not self.assisted:
+        if not (self.assisted or self.guided_learning):
             return None
-        msg = f"NexFiscal não reconheceu: {spec.label}. Clique nele na página (ou em 'Pular')."
+        mode = "APRENDIZADO GUIADO" if self.guided_learning else "RECONHECIMENTO ASSISTIDO"
+        msg = f"[STATUS: {mode} ATIVO PARA: {self.page.url}] NexFiscal precisa da sua orientação: selecione '{spec.label}' na página (ou em 'Pular')."
         log.warning(msg)
         kind = "input" if spec.kind == "password" else spec.kind
         frames = self._frames()
@@ -668,7 +670,10 @@ class SelectorEngine:
             if items and strat:
                 self.profile.record_success(spec.stage.value, spec.key, strat)  # type: ignore[union-attr]
                 return FoundElement(items[0], strat, "memória")
-            result = self._discover_single(spec)
+            # No modo guiado, não inferimos seletores novos nem executamos OCR.
+            # Só reutilizamos conhecimento persistido ou pedimos que o operador
+            # identifique explicitamente o elemento.
+            result = None if self.guided_learning else self._discover_single(spec)
             if result:
                 el, _info = result
                 self._learn(spec, el.strategy, failed)
@@ -676,7 +681,7 @@ class SelectorEngine:
             if time.monotonic() >= deadline:
                 break
             self.page.wait_for_timeout(int(self.poll * 1000))
-        ocr = self._ocr(spec)
+        ocr = None if self.guided_learning else self._ocr(spec)
         if ocr:
             return ocr
         if required:
@@ -695,7 +700,9 @@ class SelectorEngine:
             if items and strat:
                 self.profile.record_success(spec.stage.value, spec.key, strat)  # type: ignore[union-attr]
                 return FoundGroup(items, strat, "memória")
-            group = self._discover_group(spec)
+            # Grupos (por exemplo, lista de XMLs) exigem roteiro aprendido no
+            # modo guiado; se a memória falhar, encerramos sem inferir alvos.
+            group = None if self.guided_learning else self._discover_group(spec)
             if group:
                 self._learn(spec, group.strategy, failed)
                 return group
