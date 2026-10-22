@@ -4,7 +4,7 @@ O modo `guided_learning` fica habilitado por padrão.
 
 ## Regras de execução
 
-- Quando existe roteiro salvo, o motor tenta usar apenas os seletores persistidos.
+- Quando existem seletores aprendidos para o portal, o motor tenta reutilizá-los automaticamente no fluxo fiscal tipado; o registro de eventos por rota é uma trilha de auditoria, não um script de cliques reproduzido literalmente.
 - Se um seletor não for encontrado, o motor não tenta inferir outro seletor nem usa OCR; solicita orientação humana quando a etapa permite seleção assistida.
 - Para grupos de elementos (por exemplo, uma lista de XMLs), a ausência de seletor aprendido encerra a busca sem descoberta automática.
 - Para portal sem seletores aprendidos, o fluxo não abre a URL automaticamente. O operador deve abrir o portal no navegador visível dentro de `assist_timeout_seconds`.
