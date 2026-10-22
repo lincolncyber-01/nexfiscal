@@ -31,6 +31,7 @@ class LoginHandler:
                                       control, notify=reporter.captcha)
         self._captcha_seen = False
         self._label, self._city = "", ""
+        self._manual_guided_login = False
         self.recognizer = PortalRecognizer(engine.profile)
 
     # ------------------------------------------------------------ estado ----
@@ -74,6 +75,7 @@ class LoginHandler:
         self._label, self._city, self._captcha_seen = company_label, city, False
         self.reporter.stage(Stage.LOGIN, StepStatus.EM_ANDAMENTO, "Preparando portal")
         known_portal = self._has_known_login_flow()
+        self._manual_guided_login = self.settings.guided_learning and not known_portal
         if self.settings.guided_learning and not known_portal:
             message = f"[STATUS: APRENDIZADO GUIADO ATIVO PARA: {url}] Abra o portal manualmente no navegador; nenhuma navegação automática será executada."
             self.reporter.assist(message)
@@ -95,10 +97,22 @@ class LoginHandler:
         else:
             self.pm.goto(url)
         user_field = self.engine.find(pc.USER_FIELD, timeout=4, required=False)
-        if user_field is None:  # alguns portais exigem clicar em "Acesso do contribuinte"
+        if user_field is None:
             entry = self.engine.find(pc.LOGIN_ENTRY, timeout=3, required=False)
-            if entry is not None:
+            if entry is not None and self._manual_guided_login:
+                self.reporter.assist(
+                    f"[STATUS: APRENDIZADO GUIADO ATIVO PARA: {url}] "
+                    "Clique manualmente no link de acesso do portal."
+                )
+                self._wait_for_password_field()
+            elif entry is not None:
                 self.pm.click(entry, "link de acesso")
+            elif self._manual_guided_login and not self._password_visible():
+                self.reporter.assist(
+                    f"[STATUS: APRENDIZADO GUIADO ATIVO PARA: {url}] "
+                    "Navegue manualmente até a tela de login."
+                )
+                self._wait_for_password_field()
         self._remember_signature()
         if not (self.settings.guided_learning and not known_portal):
             self.recognizer.probe_login(self.engine, self.gate.detector)
@@ -112,8 +126,14 @@ class LoginHandler:
             if self.is_logged_in(login_url):  # o usuário já enviou o formulário
                 break
             if self._password_visible():
-                self._submit()
-            outcome = self._wait_outcome(login_url)
+                if self._manual_guided_login:
+                    self._request_manual_submit()
+                else:
+                    self._submit()
+            outcome = self._wait_outcome(
+                login_url,
+                wait=self.settings.assist_timeout_seconds if self._manual_guided_login else 20.0,
+            )
             if outcome == "ok":
                 break
             if outcome == "captcha":
@@ -128,6 +148,32 @@ class LoginHandler:
         self.reporter.stage(Stage.LOGIN, StepStatus.OK, "Login realizado")
         self.pm.settle()
         return self.page.url
+
+    def _wait_for_password_field(self) -> None:
+        """Aguarda o operador chegar manualmente à tela de login sem clicar/navegar por ele."""
+        deadline = time.monotonic() + self.settings.assist_timeout_seconds
+        while time.monotonic() < deadline:
+            if self.control:
+                self.control.checkpoint()
+            if self._password_visible():
+                return
+            self.page.wait_for_timeout(400)
+        raise PortalTimeoutError(
+            "O operador não abriu manualmente a tela de login durante o aprendizado guiado.",
+            stage="login",
+        )
+
+    def _request_manual_submit(self) -> None:
+        """Aprende o seletor do botão, mas deixa o envio do formulário para o operador."""
+        try:
+            self.engine.find(pc.LOGIN_BUTTON, timeout=6)
+        except ElementNotFoundError:
+            log.warning("Botão de login não pôde ser aprendido antes do envio manual.")
+        self.reporter.assist(
+            f"[STATUS: APRENDIZADO GUIADO ATIVO PARA: {self.page.url}] "
+            "Os campos foram preenchidos. Clique manualmente em Entrar no navegador; "
+            "o NexFiscal não enviará o formulário neste primeiro aprendizado."
+        )
 
     def _wait_captcha(self) -> None:
         if self.gate.wait_if_present(self._label, self._city):
