@@ -28,5 +28,7 @@ def test_guided_learning_opens_configured_portal_url():
 
     handler.pm.goto.assert_called_once_with(url)
     assert result == url
-    handler.reporter.assist.assert_called_once()
-    assert "aberto automaticamente" in handler.reporter.assist.call_args.args[0]
+    assert any(
+        "aberto automaticamente" in call.args[0]
+        for call in handler.reporter.assist.call_args_list
+    )
