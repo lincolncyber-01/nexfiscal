@@ -23,6 +23,7 @@ class XmlInfo:
     tomador: str | None = None
     quantidade_notas: int = 0
     sha256: str = ""
+    is_consulta_sem_notas: bool = False
 
 
 def _first(root: etree._Element, *paths: str) -> str | None:
@@ -56,22 +57,25 @@ class XmlValidator:
             info.reason = f"XML malformado ou incompleto: {exc}"
             return info
 
-        # Alguns portais entregam a resposta da consulta como arquivo .xml,
-        # mesmo quando não há notas. Isso não é uma NFS-e e nunca deve ser salvo
-        # nem contado como XML fiscal baixado.
+        # Preserva a resposta XML da consulta mesmo quando não há notas emitidas.
+        # Ela é um documento de consulta, não uma nota individual.
         root_name = etree.QName(root).localname.casefold()
-        if root_name in {"consultarnfseservicoprestadoresposta",
-                         "consultarnfseservicotomadoresposta",
-                         "consultarnfseservicoprestadoresposta",
-                         "consultarnfseservicotomadoresposta"}:
+        response_names = {
+            "consultarnfseservicoprestadoresposta",
+            "consultarnfseservicotomadoresposta",
+        }
+        if root_name in response_names:
             messages = " ".join(t.strip() for t in root.itertext() if t and t.strip()).casefold()
             if any(term in messages for term in (
                 "notas fiscais não localizadas", "notas fiscais nao localizadas",
                 "nenhuma nota", "nenhuma nfse", "nenhuma nfs-e",
             )):
-                info.reason = "O portal retornou a resposta da consulta: NOTAS FISCAIS NÃO LOCALIZADAS. Não é um XML fiscal de nota."
-            else:
-                info.reason = f"O portal retornou uma resposta de consulta ({root_name}), não um XML fiscal de nota."
+                info.valid = True
+                info.quantidade_notas = 0
+                info.is_consulta_sem_notas = True
+                info.reason = "Resposta da consulta preservada: NOTAS FISCAIS NÃO LOCALIZADAS."
+                return info
+            info.reason = f"O portal retornou uma resposta de consulta ({root_name}), não um XML fiscal de nota."
             return info
 
         inf = f".//{_ln('InfNfse')}"
