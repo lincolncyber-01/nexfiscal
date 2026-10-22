@@ -39,6 +39,8 @@ def build_run_request_summary(cities: set[str], rows: list[CompanyRow], period: 
         f"Pasta de destino: {output_root}\n\n"
         "Deseja continuar?"
     )
+
+
 SHOWN_STAGES = [Stage.LOGIN, Stage.CAPTCHA, Stage.NFSE, Stage.XML, Stage.LIVRO, Stage.ORGANIZACAO]
 
 
