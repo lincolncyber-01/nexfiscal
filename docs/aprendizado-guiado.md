@@ -7,7 +7,8 @@ O modo `guided_learning` fica habilitado por padrão.
 - Quando existem seletores aprendidos para o portal, o motor tenta reutilizá-los automaticamente no fluxo fiscal tipado; o registro de eventos por rota é uma trilha de auditoria, não um script de cliques reproduzido literalmente.
 - Se um seletor não for encontrado, o motor não tenta inferir outro seletor nem usa OCR; solicita orientação humana quando a etapa permite seleção assistida.
 - Para grupos de elementos (por exemplo, uma lista de XMLs), a ausência de seletor aprendido encerra a busca sem descoberta automática.
-- Para portal sem seletores aprendidos, o fluxo não abre a URL automaticamente. O operador deve abrir o portal no navegador visível dentro de `assist_timeout_seconds`.
+- Para portal sem seletores essenciais de login aprendidos, o fluxo não abre a URL automaticamente. O operador deve abrir o portal e navegar até a tela de login no navegador visível dentro de `assist_timeout_seconds`.
+- No primeiro login guiado, o operador confirma manualmente o envio do formulário; após aprender os seletores de usuário, senha e botão de login, o fluxo tipado pode automatizar logins futuros.
 - A detecção e a resolução de CAPTCHA permanecem sob o fluxo manual existente.
 - Desative `guided_learning` apenas se quiser explicitamente voltar ao reconhecimento adaptativo automático.
 
