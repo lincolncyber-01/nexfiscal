@@ -260,6 +260,17 @@ class MainWindow(QMainWindow):
             self._set_stage(ev.stage, ev.status, ev.message)
             if ev.status == StepStatus.EM_ANDAMENTO.value:
                 self.d_step.setText(ev.message or ev.stage.title)
+            elif ev.status in (StepStatus.OK.value, StepStatus.PULADO.value):
+                # Avança o status geral assim que cada etapa confirma conclusão.
+                next_step = {
+                    Stage.CAPTCHA: "Concluindo login",
+                    Stage.LOGIN: "Preparando download de XML",
+                    Stage.XML: "Preparando Livro Fiscal",
+                    Stage.LIVRO: "Organizando arquivos",
+                    Stage.ORGANIZACAO: "Finalizando empresa",
+                }.get(ev.stage)
+                if next_step:
+                    self.d_step.setText(next_step)
             if ev.stage is Stage.CAPTCHA and ev.status in ("OK", "PULADO"):
                 self.banner.hide()
         elif ev.kind is EventKind.CAPTCHA:
