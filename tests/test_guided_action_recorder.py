@@ -1,7 +1,7 @@
 """Tests for privacy-safe guided action recording."""
 import json
 
-from nexfiscal.portal.guided_action_recorder import GuidedActionRecorder
+from nexfiscal.portal.guided_action_recorder import GuidedActionRecorder, _INSTALL_RECORDER
 
 
 def test_validate_strips_query_and_fragment_and_never_keeps_input_value():
@@ -93,3 +93,9 @@ def test_recorded_url_does_not_retain_url_credentials():
     assert result["url"] == "https://portal.example/login"
     assert "password" not in result["url"]
     assert "secret" not in result["url"]
+
+
+
+def test_browser_recorder_never_reads_dynamic_text_or_input_values():
+    assert "el.innerText" not in _INSTALL_RECORDER
+    assert "el.value" not in _INSTALL_RECORDER
