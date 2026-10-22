@@ -1,5 +1,6 @@
 """Tests for strict guided-login entry decisions."""
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 from nexfiscal.authentication.login import LoginHandler
 from nexfiscal.config import portal_config as pc
@@ -38,10 +39,10 @@ def test_portal_without_profile_never_counts_as_known_login_flow():
 
 def test_unknown_portal_login_submission_is_left_to_operator():
     handler = LoginHandler.__new__(LoginHandler)
-    handler.engine = SimpleNamespace(find=__import__("unittest.mock", fromlist=["Mock"]).Mock())
+    handler.engine = SimpleNamespace(find=Mock())
     handler.page = SimpleNamespace(url="https://portal.example/login")
-    handler.reporter = __import__("unittest.mock", fromlist=["Mock"]).Mock()
-    handler.pm = __import__("unittest.mock", fromlist=["Mock"]).Mock()
+    handler.reporter = Mock()
+    handler.pm = Mock()
 
     handler._request_manual_submit()
 
