@@ -14,13 +14,13 @@ from .reader import SpreadsheetData, read_spreadsheet
 
 
 class Level(str, Enum):
-    ERROR = "ERRO"        # crítico: impede o processamento
-    WARNING = "AVISO"     # informativo
+    ERROR = "ERRO"
+    WARNING = "AVISO"
 
 
 @dataclass
 class Issue:
-    row: int              # 0 = problema geral (arquivo/colunas)
+    row: int
     message: str
     level: Level = Level.ERROR
 
@@ -48,7 +48,6 @@ class ValidationReport:
         return [r for r in self.rows if r.row_number not in bad]
 
     def cities(self) -> dict[str, list[CompanyRow]]:
-        """Agrupa por cidade (nome original da primeira ocorrência), preservando a ordem."""
         groups: dict[str, list[CompanyRow]] = {}
         names: dict[str, str] = {}
         for r in self.rows:
@@ -57,7 +56,6 @@ class ValidationReport:
         return {names[k]: v for k, v in groups.items()}
 
     def format(self) -> str:
-        """Texto no formato da especificação."""
         lines: list[str] = []
         if self.errors:
             lines.append("ERROS ENCONTRADOS")
@@ -83,7 +81,7 @@ class ValidationReport:
 
 
 def validate_rows(rows: list[CompanyRow], known_cities: set[str] | None = None) -> ValidationReport:
-    """Valida linhas já lidas. ``known_cities`` = cidades (normalizadas) com portal cadastrado."""
+    """Valida linhas já lidas. Razão social é obrigatória para nomear a pasta da empresa."""
     report = ValidationReport(rows=list(rows))
     seen: dict[tuple[str, str], CompanyRow] = {}
 
@@ -91,6 +89,8 @@ def validate_rows(rows: list[CompanyRow], known_cities: set[str] | None = None) 
         n = r.row_number
         if not r.cnpj_usuario.strip():
             report.issues.append(Issue(n, "CNPJ/USUÁRIO vazio"))
+        if not r.razao_social.strip():
+            report.issues.append(Issue(n, "Razão social da empresa não informada"))
         if not r.password:
             report.issues.append(Issue(n, "Senha vazia"))
         if not r.cidade.strip():
@@ -113,13 +113,13 @@ def validate_rows(rows: list[CompanyRow], known_cities: set[str] | None = None) 
             key = (r.usuario_key, r.cidade_norm)
             if key in seen:
                 first = seen[key]
-                if first.password == r.password:
+                if first.password == r.password and first.razao_social == r.razao_social:
                     report.issues.append(Issue(
                         n, f"Linha duplicada (igual à linha {first.row_number}); será processada uma vez",
                         Level.WARNING))
                 else:
                     report.issues.append(Issue(
-                        n, f"Empresa duplicada com senha diferente da linha {first.row_number}"))
+                        n, f"Empresa duplicada com senha ou razão social diferente da linha {first.row_number}"))
             else:
                 seen[key] = r
 
@@ -128,7 +128,6 @@ def validate_rows(rows: list[CompanyRow], known_cities: set[str] | None = None) 
                 n, f"Cidade desconhecida: '{r.cidade}' (portal não cadastrado — será solicitado)",
                 Level.WARNING))
 
-    # remove duplicatas exatas da lista de processamento
     unique: dict[tuple[str, str], CompanyRow] = {}
     for r in report.rows:
         if r.cidade.strip() and r.cnpj_usuario.strip():

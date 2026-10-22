@@ -39,16 +39,14 @@ python main.py --help     # linha de comando (mesmas funções)
 
 ## Planilha de entrada
 
-`.xlsx` com três colunas (aceita variações como `CNPJ`, `Usuário`, `Município`):
+`.xlsx` com quatro colunas obrigatórias (aceita variações como `CNPJ`, `Usuário`, `Município`, `Empresa` e `Nome Empresarial`):
 
-| CNPJ/USUÁRIO       | SENHA       | CIDADE               |
-| ------------------ | ----------- | -------------------- |
-| 12.345.678/0001-01 | Senha@001   | Salvador             |
-| 45.678.901/0001-04 | Acesso#456  | Feira de Santana     |
+| CNPJ/USUÁRIO       | RAZÃO SOCIAL                          | SENHA      | CIDADE           |
+| ------------------ | ------------------------------------- | ---------- | ---------------- |
+| 12.345.678/0001-01 | RAZÃO SOCIAL COMPLETA DA EMPRESA LTDA | Senha@001  | Salvador         |
+| 45.678.901/0001-04 | OUTRA EMPRESA LTDA                    | Acesso#456 | Feira de Santana |
 
-O CNPJ/USUÁRIO é o login do portal e também identifica a empresa nas pastas. Antes de processar, a planilha é
-validada (arquivo, colunas, campos vazios, formato do CNPJ, duplicidades, cidades sem portal). Enquanto houver
-**erros críticos** nada é executado; o relatório de erros usa o **número da linha do Excel**:
+O CNPJ/USUÁRIO é o login do portal. A coluna RAZÃO SOCIAL é obrigatória e nomeia a pasta da empresa; CNPJ e senha não são usados no nome das pastas. Antes de processar, a planilha é validada (arquivo, colunas, campos vazios, formato do CNPJ, duplicidades, cidades sem portal). Enquanto houver **erros críticos** nada é executado; o relatório de erros usa o **número da linha do Excel**:
 
 ```
 ERROS ENCONTRADOS
@@ -57,8 +55,8 @@ Linha 8:
 - CNPJ/USUÁRIO vazio
 ```
 
-Linha idêntica repetida vira aviso (processada uma vez); mesma empresa com senhas diferentes é erro. Cidade sem
-portal cadastrado é **aviso**: a URL é pedida antes do processamento.
+Linha idêntica repetida vira aviso (processada uma vez); mesma empresa com senha ou razão social diferente é erro. Cidade sem portal cadastrado é **aviso**: a URL é pedida antes do processamento.
+
 
 ## Cadastrar uma cidade/portal
 
@@ -85,17 +83,14 @@ bissexto. Pode informar `MM/AAAA` na tela principal, e datas inicial/final manua
 ## Estrutura de saída
 
 ```
-ROOT/
+ROOT/                                  (única pasta configurável)
 └── Salvador/
-    └── 12.345.678-0001-01/
-        └── 09-2026/
-            ├── XML/            NFSe_<número>.xml  (conteúdo original, sem modificação)
-            ├── Livro_Fiscal/   Livro_Fiscal_<cnpj>_09-2026.<pdf|xml|xls|xlsx|csv>
-            └── _resumo.json    contagens e pendências (sem senhas)
+    └── RAZÃO SOCIAL COMPLETA DA EMPRESA LTDA/
+        ├── nome-original-do-portal.xml
+        └── Livro Fiscal.pdf
 ```
 
-Nomes são sanitizados para qualquer sistema operacional. XML existente **e válido** não é baixado de novo; se
-estiver corrompido/incompleto, é baixado outra vez.
+A estrutura é sempre ROOT/Cidade/Razão Social. O nome da cidade e a razão social são preservados como nomes de pasta, removendo apenas caracteres inválidos no sistema de arquivos. Não são criadas subpastas por competência, tipo de arquivo ou portal. A pasta da empresa contém os arquivos fiscais baixados; resumos de execução ficam separados em `~/.nexfiscal/logs/manifests`. Os nomes dos XMLs e do Livro Fiscal são preservados conforme os nomes produzidos pelo fluxo de download. XML existente **e válido** não é baixado de novo; se estiver corrompido/incompleto, é baixado outra vez. Para bancos antigos, reimporte a planilha com a coluna RAZÃO SOCIAL antes de retomar o processamento.
 
 ## Funcionamento da memória dos portais
 

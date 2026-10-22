@@ -10,13 +10,14 @@ from typing import Any
 
 from ..security import secure_path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS companies (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     usuario_key TEXT NOT NULL,
     cnpj_usuario TEXT NOT NULL,
+    razao_social TEXT NOT NULL DEFAULT '',
     cidade TEXT NOT NULL,
     cidade_norm TEXT NOT NULL,
     senha_enc TEXT,
@@ -132,6 +133,12 @@ class Database:
     def _init_schema(self) -> None:
         with self._lock:
             self._conn.executescript(SCHEMA)
+            # Migração aditiva para bancos existentes: preserva credenciais e histórico.
+            columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(companies)")}
+            if "razao_social" not in columns:
+                self._conn.execute(
+                    "ALTER TABLE companies ADD COLUMN razao_social TEXT NOT NULL DEFAULT ''"
+                )
             self._conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
     def execute(self, sql: str, params: Iterable[Any] = ()) -> sqlite3.Cursor:

@@ -79,13 +79,17 @@ def sanitize_name(name: str, replacement: str = "-") -> str:
 
 
 def city_folder_name(city: str) -> str:
-    """'Vitória da Conquista' -> 'Vitoria_da_Conquista'."""
-    base = re.sub(r"\s+", "_", strip_accents(city).strip())
-    return sanitize_name(base, "-")
+    """Preserva o nome da cidade, inclusive acentos e espaços."""
+    return sanitize_name(re.sub(r"\s+", " ", (city or "").strip()), "-")
+
+
+def company_folder_name(razao_social: str) -> str:
+    """Preserva a razão social legível, removendo apenas caracteres inválidos no sistema de arquivos."""
+    return sanitize_name(re.sub(r"\s+", " ", (razao_social or "").strip()), "-")
 
 
 def cnpj_folder_name(cnpj_usuario: str) -> str:
-    """'12.345.678/0001-01' -> '12.345.678-0001-01'."""
+    """'12.345.678/0001-01' -> '12.345.678-0001-01' (compatibilidade legada)."""
     return sanitize_name(format_cnpj(cnpj_usuario).replace("/", "-"), "-")
 
 

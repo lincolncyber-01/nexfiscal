@@ -221,7 +221,7 @@ class CompanyWorkflow:
     def _execute(self) -> CompanyResult:
         out = CompanyResult(RunStatus.EM_EXECUCAO, steps=self.steps)
         try:
-            paths = self.layout.paths(self.row.cidade, self.row.cnpj_usuario, self.period.competence)
+            paths = self.layout.paths(self.row.cidade, self.row.razao_social, self.period.competence)
         except NexFiscalError as exc:
             return self._fail(out, Stage.ORGANIZACAO, exc, "Verifique as permissões da pasta de saída.")
 
@@ -297,7 +297,7 @@ class CompanyWorkflow:
         # ------------------------------------------------------ organização ---
         try:
             OutputLayout.write_manifest(paths, {
-                "empresa": self.cnpj, "cidade": self.row.cidade,
+                "empresa": self.cnpj, "razao_social": self.row.razao_social, "cidade": self.row.cidade,
                 "competencia": self.period.competence.label,
                 "periodo": f"{self.period.start_br} a {self.period.end_br}",
                 "xml": {"encontrados": out.xml.found, "baixados": out.xml.downloaded,

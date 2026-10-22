@@ -42,16 +42,17 @@ class StepStatus(str, Enum):
     PENDENTE = "PENDENTE"
     EM_ANDAMENTO = "EM_ANDAMENTO"
     OK = "OK"
-    PULADO = "PULADO"       # não foi necessário (ex.: sem CAPTCHA, já concluído antes)
+    PULADO = "PULADO"
     PENDENCIA = "PENDENCIA"
     ERRO = "ERRO"
 
 
 class CompanyRow(BaseModel):
-    """Linha da planilha. Campos vazios são permitidos aqui; o validador os reporta."""
+    """Linha da planilha; razão social é obrigatória para organizar os arquivos."""
 
     row_number: int = 0
     cnpj_usuario: str = ""
+    razao_social: str = ""
     senha: SecretStr = Field(default=SecretStr(""), repr=False)
     cidade: str = ""
 
