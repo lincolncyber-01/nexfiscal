@@ -23,6 +23,22 @@ from .dialogs import PortalsDialog, SettingsDialog, TextDialog
 from .worker import BatchWorker
 
 SYMBOL = {"PENDENTE": "○", "EM_ANDAMENTO": "●", "OK": "✓", "PULADO": "–", "PENDENCIA": "!", "ERRO": "✗"}
+
+
+def build_run_request_summary(cities: set[str], rows: list[CompanyRow], period: Period,
+                              output_root: str) -> str:
+    """Resumo determinístico da requisição que o usuário confirma antes de abrir o navegador."""
+    selected = {city.casefold() for city in cities}
+    companies = [row for row in rows if row.cidade.casefold() in selected]
+    city_lines = "\\n".join(f"• {city}" for city in sorted(cities, key=str.casefold))
+    return (
+        "Confira a requisição antes de iniciar a automação. O navegador só será aberto após sua confirmação.\\n\\n"
+        f"Cidades ({len(cities)}):\\n{city_lines}\\n\\n"
+        f"Empresas a processar: {len(companies)}\\n"
+        f"Competência: {period.competence.label} ({period.start_br} a {period.end_br})\\n"
+        f"Pasta de destino: {output_root}\\n\\n"
+        "Deseja continuar?"
+    )
 SHOWN_STAGES = [Stage.LOGIN, Stage.CAPTCHA, Stage.NFSE, Stage.XML, Stage.LIVRO, Stage.ORGANIZACAO]
 
 
@@ -152,12 +168,25 @@ class MainWindow(QMainWindow):
         if not chosen:
             QMessageBox.information(self, "Cidades", "Nenhuma cidade selecionada.")
             return
-        # portais ausentes: pede a URL (cadastro permanente)
+        # Portais ausentes: solicitar/cadastrar a URL antes de qualquer navegador ser iniciado.
         skipped = self.registry.ensure_portals(sorted(chosen), self._ask_portal)
         chosen -= set(skipped)
         if not chosen:
             return
+
+        # Requisição explícita: a confirmação é modal e ocorre antes de criar/iniciar o worker,
+        # que é o responsável por iniciar o navegador.
         s.output_root = self.out.text().strip() or s.output_root
+        summary = build_run_request_summary(chosen, rows, period, s.output_root)
+        self.raise_()
+        self.activateWindow()
+        answer = QMessageBox.question(
+            self, "Confirmar requisição de processamento", summary,
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            self.status.setText("Requisição cancelada — o navegador não foi iniciado.")
+            return
         s.competence = self.comp.text().strip() or None
         self.ctx.save_settings()
         norm = {c.lower() for c in chosen}
