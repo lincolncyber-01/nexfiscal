@@ -14,7 +14,7 @@ def test_output_layout_uses_city_and_legal_name_without_extra_folders(tmp_path: 
         "São Paulo", "ACME Comércio e Serviços Ltda.", comp
     )
 
-    expected = tmp_path / "São Paulo" / "ACME Comércio e Serviços Ltda."
+    expected = tmp_path / "São Paulo" / "ACME Comércio e Serviços Ltda"
     assert paths.competence_dir == expected
     assert paths.xml_dir == expected
     assert paths.livro_dir == expected
@@ -24,7 +24,7 @@ def test_output_layout_uses_city_and_legal_name_without_extra_folders(tmp_path: 
 
 def test_folder_names_preserve_official_names_and_sanitize_invalid_chars() -> None:
     assert city_folder_name("  Vitória da Conquista  ") == "Vitória da Conquista"
-    assert company_folder_name("Empresa: Comércio/Serviços Ltda.") == "Empresa- Comércio-Serviços Ltda."
+    assert company_folder_name("Empresa: Comércio/Serviços Ltda.") == "Empresa- Comércio-Serviços Ltda"
 
 
 def test_spreadsheet_requires_legal_name_column(tmp_path: Path) -> None:
