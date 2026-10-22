@@ -34,8 +34,13 @@ URL sem query/fragmento, seletor candidato, tipo do controle e rótulo. **Valore
 não são registrados**; eventos de entrada em campos sensíveis são ignorados. Isso evita
 persistir senhas, tokens ou dados de formulário acidentalmente.
 
-A captura é uma base para o roteiro; ainda não significa que o fluxo seja reproduzido
-automaticamente. Antes de conectar a gravação ao ciclo completo, é necessário definir a
-aprovação explícita do roteiro, a configuração de parâmetros variáveis e a política de
-reprodução segura de downloads/CAPTCHA. A tabela `portal_flows` já aceita lista de strings
-JSON, então `serialize()` mantém compatibilidade com o armazenamento existente.
+Os eventos são coletados durante a execução do CompanyWorkflow e persistidos ao final,
+inclusive em falhas e cancelamentos, separados por rota e vinculados ao perfil do portal.
+A tabela portal_flows armazena os eventos como strings JSON.
+
+O registro não é reproduzido como uma sequência cega de cliques. O NexFiscal usa os
+seletores aprendidos para executar o fluxo fiscal tipado, preenchendo credenciais e
+competências com os dados da execução, validando downloads e tratando CAPTCHA no fluxo
+manual existente. Reexecutar cliques gravados cegamente poderia submeter formulários ou
+duplicar operações; por isso, eventos são trilha estruturada, enquanto seletores confirmados
+são o mecanismo de reutilização automática.
