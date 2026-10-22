@@ -30,13 +30,13 @@ def build_run_request_summary(cities: set[str], rows: list[CompanyRow], period: 
     """Resumo determinístico da requisição que o usuário confirma antes de abrir o navegador."""
     selected = {city.casefold() for city in cities}
     companies = [row for row in rows if row.cidade.casefold() in selected]
-    city_lines = "\\n".join(f"• {city}" for city in sorted(cities, key=str.casefold))
+    city_lines = "\n".join(f"• {city}" for city in sorted(cities, key=str.casefold))
     return (
-        "Confira a requisição antes de iniciar a automação. O navegador só será aberto após sua confirmação.\\n\\n"
-        f"Cidades ({len(cities)}):\\n{city_lines}\\n\\n"
-        f"Empresas a processar: {len(companies)}\\n"
-        f"Competência: {period.competence.label} ({period.start_br} a {period.end_br})\\n"
-        f"Pasta de destino: {output_root}\\n\\n"
+        "Confira a requisição antes de iniciar a automação. O navegador só será aberto após sua confirmação.\n\n"
+        f"Cidades ({len(cities)}):\n{city_lines}\n\n"
+        f"Empresas a processar: {len(companies)}\n"
+        f"Competência: {period.competence.label} ({period.start_br} a {period.end_br})\n"
+        f"Pasta de destino: {output_root}\n\n"
         "Deseja continuar?"
     )
 SHOWN_STAGES = [Stage.LOGIN, Stage.CAPTCHA, Stage.NFSE, Stage.XML, Stage.LIVRO, Stage.ORGANIZACAO]
