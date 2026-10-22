@@ -44,3 +44,49 @@ def test_sensitive_field_identifiers_are_not_part_of_event_payload_values():
 
     assert "senha" in result["selector"]["value"]
     assert "value" not in result
+
+
+
+def test_flow_name_is_scoped_to_web_route_and_ignores_query_fragment():
+    name = GuidedActionRecorder.flow_name(
+        "https://portal.example/financeiro?token=secret#download"
+    )
+
+    assert name == "guided_actions_v1:portal.example/financeiro"
+    assert "secret" not in name
+
+
+def test_recorder_receives_events_in_python_queue_across_navigation():
+    recorder = GuidedActionRecorder(page=object())
+    event = {
+        "order": 1, "event": "click",
+        "url": "https://portal.example/login?session=secret",
+        "selector": {"type": "id", "value": "entrar"},
+        "tag": "button", "control_type": "submit", "label": "Entrar",
+        "checked": None,
+    }
+
+    recorder._receive({}, event)
+    recorder._receive({}, dict(event, order=1, url="https://portal.example/home"))
+
+    captured = recorder.drain()
+
+    assert [item["url"] for item in captured] == [
+        "https://portal.example/login", "https://portal.example/home"
+    ]
+    assert recorder.drain() == []
+
+
+def test_recorded_url_does_not_retain_url_credentials():
+    event = {
+        "order": 1, "event": "click",
+        "url": "https://user:password@portal.example/login?token=secret",
+        "selector": {"type": "id", "value": "go"},
+        "tag": "button", "control_type": "button", "label": "Continuar",
+    }
+
+    result = GuidedActionRecorder._validate(event)
+
+    assert result["url"] == "https://portal.example/login"
+    assert "password" not in result["url"]
+    assert "secret" not in result["url"]
