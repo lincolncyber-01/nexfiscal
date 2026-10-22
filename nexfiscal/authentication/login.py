@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+from urllib.parse import urlsplit
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
@@ -67,13 +68,17 @@ class LoginHandler:
             message = f"[STATUS: APRENDIZADO GUIADO ATIVO PARA: {url}] Abra o portal manualmente no navegador; nenhuma navegação automática será executada."
             self.reporter.assist(message)
             log.warning(message)
+            expected_host = (urlsplit(url).hostname or "").lower()
             deadline = time.monotonic() + self.settings.assist_timeout_seconds
-            while time.monotonic() < deadline and self.page.url == "about:blank":
+            while time.monotonic() < deadline:
                 if self.control:
                     self.control.checkpoint()
+                current_host = (urlsplit(self.page.url).hostname or "").lower()
+                if expected_host and current_host == expected_host:
+                    break
                 self.page.wait_for_timeout(400)
-            if self.page.url == "about:blank":
-                raise PortalTimeoutError("O operador não abriu manualmente o portal durante o aprendizado guiado.", stage="login")
+            else:
+                raise PortalTimeoutError("O operador não abriu manualmente o portal correto durante o aprendizado guiado.", stage="login")
         else:
             self.pm.goto(url)
         user_field = self.engine.find(pc.USER_FIELD, timeout=4, required=False)
