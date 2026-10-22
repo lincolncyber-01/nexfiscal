@@ -2,6 +2,7 @@ name: Build Windows
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     tags: ["v*"]
 jobs:
   build:
@@ -34,6 +35,7 @@ jobs:
         with:
           name: NexFiscal-Windows
           path: NexFiscal-Windows.zip
+          retention-days: 14
       - name: Diagnostico - abrir o executavel (apos entregar o zip)
         timeout-minutes: 3
         continue-on-error: true
