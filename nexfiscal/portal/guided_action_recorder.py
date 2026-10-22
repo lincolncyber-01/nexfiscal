@@ -54,7 +54,7 @@ _INSTALL_RECORDER = r"""
     // Nunca registrar o conteúdo de campos. Ignorar eventos de entrada em campos sensíveis.
     if (sensitive && event.type !== 'click') return;
     if (event.type === 'input' && !['date', 'month', 'checkbox', 'radio'].includes(type)) return;
-    window.__nexfiscalRecordedActions.push({
+    const action = {
       order: window.__nexfiscalRecordedActions.length + 1,
       event: event.type,
       url: location.href,
@@ -64,7 +64,10 @@ _INSTALL_RECORDER = r"""
       label: label(el),
       // Apenas estado booleano de checkbox/radio; nenhum texto ou valor digitado.
       checked: ['checkbox', 'radio'].includes(type) ? Boolean(el.checked) : null
-    });
+    };
+    window.__nexfiscalRecordedActions.push(action);
+    if (typeof window.__nexfiscalRecordAction === 'function')
+      window.__nexfiscalRecordAction(action);
   }
   document.addEventListener('click', record, true);
   document.addEventListener('change', record, true);
@@ -78,23 +81,28 @@ class GuidedActionRecorder:
 
     def __init__(self, page: Any) -> None:
         self.page = page
+        self._events: list[dict[str, Any]] = []
+        self._binding_installed = False
+
+    def _receive(self, _source: dict[str, Any], event: dict[str, Any]) -> None:
+        """Recebe eventos diretamente do documento, inclusive antes de navegações."""
+        try:
+            self._events.append(self._validate(event))
+        except (TypeError, ValueError, AttributeError):
+            return
 
     def start(self) -> None:
         """Instala captura em documentos novos e no documento atualmente aberto."""
+        if not self._binding_installed:
+            self.page.expose_binding("__nexfiscalRecordAction", self._receive)
+            self._binding_installed = True
         self.page.add_init_script(_INSTALL_RECORDER)
         self.page.evaluate(_INSTALL_RECORDER)
 
     def drain(self) -> list[dict[str, Any]]:
         """Retira eventos capturados, preservando a ordem observada pelo navegador."""
-        events = self.page.evaluate(
-            """() => {
-              const items = window.__nexfiscalRecordedActions || [];
-              window.__nexfiscalRecordedActions = [];
-              return items;
-            }"""
-        )
-        validated = [self._validate(event) for event in events]
-        return [event for event in validated if event["url"].startswith(("http://", "https://"))]
+        events, self._events = self._events, []
+        return [event for event in events if event["url"].startswith(("http://", "https://"))]
 
     @staticmethod
     def _validate(event: dict[str, Any]) -> dict[str, Any]:
