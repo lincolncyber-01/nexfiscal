@@ -80,9 +80,8 @@ def sanitize_name(name: str, replacement: str = "-") -> str:
 
 
 def city_folder_name(city: str) -> str:
-    """'Vitória da Conquista' -> 'Vitoria_da_Conquista'."""
-    base = re.sub(r"\s+", "_", strip_accents(city).strip())
-    return sanitize_name(base, "-")
+    """Preserva o nome da cidade, inclusive acentos e espaços."""
+    return sanitize_name(re.sub(r"\s+", " ", (city or "").strip()), "-")
 
 
 def company_folder_name(razao_social: str) -> str:
