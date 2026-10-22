@@ -15,10 +15,16 @@ O modo `guided_learning` fica habilitado por padrão.
 
 A opção fica em `Settings.guided_learning` e é persistida no arquivo de configurações JSON do NexFiscal. O status do aprendizado guiado é enviado à interface pelo canal de assistência.
 
-## Limitações a validar
+## Persistência e reutilização
 
-O modo impede descoberta automática de seletores; ele não grava por si só cada clique como um evento de baixo nível. A memória atual persiste estratégias de seletores por etapa e chave. A captura completa de sequências de ações (tipo de evento, ordem e parâmetros não sensíveis) deve ser tratada como uma etapa adicional antes de considerar o requisito de gravação de roteiro integralmente atendido.
+- Os seletores confirmados são persistidos por portal, etapa e elemento lógico; as execuções futuras tentam esses seletores antes de pedir orientação.
+- O gravador registra eventos observados em cada rota e persiste o último conjunto de eventos daquela rota na memória SQLite do portal. As rotas não visitadas continuam preservadas.
+- O registro atravessa navegações da mesma sessão por meio de uma ligação direta entre o documento e o processo Python; query strings, fragmentos e credenciais embutidas na URL não são armazenados.
+- O registro de eventos é uma trilha estruturada de observação, não um script bruto de replay. O NexFiscal usa seus fluxos fiscais tipados para preencher credenciais, competências, executar downloads e validar arquivos. Reproduzir cliques cegamente seria inseguro (poderia submeter formulários ou repetir downloads) e os valores de campos são intencionalmente omitidos.
+- Se um seletor salvo falhar, o motor não tenta descobrir substitutos automaticamente no modo guiado. A etapa falha de forma controlada ou solicita seleção assistida conforme a configuração; a execução não deve ser considerada concluída só porque existe um registro de eventos.
 
+The table portal_flows stores events as JSON strings, preserving compatibility with the existing SQLite structure.
+Settings.guided_learning controls this behavior and remains enabled by default.
 
 ## Registro estruturado de ações guiadas
 
