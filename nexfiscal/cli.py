@@ -104,6 +104,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--version", action="version", version=f"NexFiscal {__version__}")
     sub = p.add_subparsers(dest="cmd")
     sub.add_parser("gui", help="abre a interface gráfica (padrão)")
+    learn = sub.add_parser("learn", help="aprendizado guiado de um portal informado antes de abrir o navegador")
+    learn.add_argument("--cidade", required=True, help="cidade associada ao portal")
+    learn.add_argument("--url", required=True, help="URL inicial do portal (http/https)")
+
     r = sub.add_parser("run", help="processa em linha de comando (sem --planilha: retoma as armazenadas)")
     r.add_argument("--planilha")
     r.add_argument("--saida", help="pasta raiz de saída")
