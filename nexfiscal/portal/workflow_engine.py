@@ -1,4 +1,4 @@
-"""Fluxo completo de UMA empresa: login -> NFS-e -> XML -> Livro Fiscal -> organização.
+"""Fluxo completo de UMA empresa: login/CAPTCHA -> XML -> Livro Fiscal -> organização.
 
 Regras de falha:
 * erro de login/credenciais encerra a empresa com ERRO (sem novas tentativas);
@@ -32,7 +32,6 @@ from ..exceptions import (CancelledError, ConfigurationError, NetworkError, NexF
 from ..fiscal_book.downloader import LivroFileStore
 from ..fiscal_book.fiscal_book import FiscalBookHandler
 from ..logs.logger import SECRETS
-from ..nfse.nfse_consult import NfseConsult
 from ..nfse.xml_downloader import XmlDownloader, XmlStats
 from ..storage.organizer import OutputLayout
 from .portal_memory import PortalProfile
@@ -163,14 +162,7 @@ class CompanyWorkflow:
 
     # ----------------------------------------------------------------- etapas ---
     def _xml_flow(self, paths_xml: Path, out: CompanyResult) -> None:
-        self._set(Stage.NFSE, StepStatus.EM_ANDAMENTO, "Acessando consulta de NFS-e")
-        outcome = NfseConsult(self.engine, self.pm, self.settings.timeout_seconds).search(self.period)
-        self._set(Stage.NFSE, StepStatus.OK)
-        self._log(Stage.NFSE, "OK", "Consulta executada" + (" (sem notas)" if outcome.empty else ""))
-        if outcome.empty:
-            self._set(Stage.XML, StepStatus.OK, "Sem notas no período")
-            self._log(Stage.XML, "OK", "Nenhuma NFS-e no período")
-            return
+        """Segue diretamente para a coleta de XMLs após o login/CAPTCHA."""
         self._set(Stage.XML, StepStatus.EM_ANDAMENTO, "Baixando XMLs")
         stats = XmlDownloader(self.page, self.engine, self.pm, self.dm, self.settings,
                               self.reporter).run(paths_xml)
@@ -244,24 +236,23 @@ class CompanyWorkflow:
             res.retry_company = infra
             return res
 
-        # --------------------------------------------------- NFS-e + XML ---
+        # --------------------------------------------------------- XML ---
         if need_xml:
             try:
-                self._attempt("NFS-e/XML", lambda: self._xml_flow(paths.xml_dir, out))
+                self._attempt("XML", lambda: self._xml_flow(paths.xml_dir, out))
                 if out.xml.failed:
                     xml_state = "partial"
                     problems.append(f"{out.xml.failed} XML(s) com falha")
             except CancelledError:
                 raise
             except Exception as exc:
-                stage = Stage.XML if self.steps.get(Stage.NFSE.value) == StepStatus.OK.value else Stage.NFSE
+                stage = Stage.XML
                 self._set(stage, StepStatus.ERRO, friendly_error(exc))
                 self._log(stage, "ERRO", err=friendly_error(exc))
                 self._error_block(stage, friendly_error(exc), "Etapa marcada para nova tentativa.")
                 xml_state = "fail"
                 problems.append(f"{stage.title}: {friendly_error(exc)}")
         else:
-            self._set(Stage.NFSE, StepStatus.PULADO, "Já concluído")
             out.xml = XmlStats()
 
         # ---------------------------------------------------- Livro Fiscal ---
