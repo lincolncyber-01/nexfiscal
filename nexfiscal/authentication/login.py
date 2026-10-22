@@ -4,7 +4,6 @@ from __future__ import annotations
 import logging
 import re
 import time
-from urllib.parse import urlsplit
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
@@ -76,26 +75,21 @@ class LoginHandler:
         self.reporter.stage(Stage.LOGIN, StepStatus.EM_ANDAMENTO, "Preparando portal")
         known_portal = self._has_known_login_flow()
         self._manual_guided_login = self.settings.guided_learning and not known_portal
+        # Sempre abra a URL cadastrada para a cidade. O aprendizado guiado controla
+        # como os elementos são operados, não deve impedir a navegação inicial e deixar
+        # a nova aba em about:blank.
+        self.pm.goto(url)
         if self.settings.guided_learning and not known_portal:
-            message = f"[STATUS: APRENDIZADO GUIADO ATIVO PARA: {url}] Abra o portal manualmente no navegador; nenhuma navegação automática será executada."
+            message = (
+                f"[STATUS: APRENDIZADO GUIADO ATIVO PARA: {url}] "
+                "O portal foi aberto automaticamente. Navegue manualmente até a tela de login "
+                "se houver uma página intermediária; o NexFiscal não enviará o formulário "
+                "durante o primeiro aprendizado."
+            )
             self.reporter.assist(message)
-            log.warning(message)
-            expected_host = (urlsplit(url).hostname or "").lower()
-            deadline = time.monotonic() + self.settings.assist_timeout_seconds
-            while time.monotonic() < deadline:
-                if self.control:
-                    self.control.checkpoint()
-                current_host = (urlsplit(self.page.url).hostname or "").lower()
-                if expected_host and current_host == expected_host:
-                    break
-                self.page.wait_for_timeout(400)
-            else:
-                raise PortalTimeoutError("O operador não abriu manualmente o portal correto durante o aprendizado guiado.", stage="login")
-            # Detectar e sinalizar CAPTCHA assim que o operador abrir o portal,
-            # antes de solicitar qualquer interação com os campos de login.
+            log.info(message)
+            # Detectar/sinalizar CAPTCHA depois de abrir a URL e antes de interagir com login.
             self._wait_captcha()
-        else:
-            self.pm.goto(url)
         user_field = self.engine.find(pc.USER_FIELD, timeout=4, required=False)
         if user_field is None:
             entry = self.engine.find(pc.LOGIN_ENTRY, timeout=3, required=False)
