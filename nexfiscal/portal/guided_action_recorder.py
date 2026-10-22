@@ -41,7 +41,7 @@ _INSTALL_RECORDER = r"""
   }
   function label(el) {
     return norm(el.getAttribute('aria-label') || el.getAttribute('placeholder') ||
-      el.getAttribute('title') || el.innerText || el.value && el.type !== 'password' && el.value || '');
+      el.getAttribute('title') || el.innerText || '');
   }
   function record(event) {
     const el = event.target && event.target.closest &&
