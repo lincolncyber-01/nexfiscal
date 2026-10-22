@@ -135,6 +135,10 @@ class XmlDownloader:
                 log.warning("XML: tentativa %d/%d falhou: %s", attempt, self.settings.max_retries, last_error)
                 if self._session_lost():  # a falha é a sessão caída: refazer login, não insistir
                     raise SessionExpiredError("A sessão do portal expirou durante o download dos XMLs.") from exc
+                # Resposta de consulta sem notas é um resultado funcional, não falha transitória.
+                # Não repetir o mesmo clique/download três vezes.
+                if "NOTAS FISCAIS NÃO LOCALIZADAS" in last_error:
+                    break
                 self.pm.pause(2.0)
             except NexFiscalError as exc:
                 last_error = exc.message
