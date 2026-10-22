@@ -4,7 +4,6 @@ from __future__ import annotations
 import logging
 import re
 import time
-from urllib.parse import urlsplit
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
