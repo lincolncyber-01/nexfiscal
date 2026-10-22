@@ -23,7 +23,7 @@ from .dialogs import PortalsDialog, SettingsDialog, TextDialog
 from .worker import BatchWorker
 
 SYMBOL = {"PENDENTE": "○", "EM_ANDAMENTO": "●", "OK": "✓", "PULADO": "–", "PENDENCIA": "!", "ERRO": "✗"}
-SHOWN_STAGES = [Stage.LOGIN, Stage.CAPTCHA, Stage.NFSE, Stage.XML, Stage.LIVRO, Stage.ORGANIZACAO]
+SHOWN_STAGES = [Stage.LOGIN, Stage.CAPTCHA, Stage.XML, Stage.LIVRO, Stage.ORGANIZACAO]
 
 
 class MainWindow(QMainWindow):
