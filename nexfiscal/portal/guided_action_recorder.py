@@ -141,8 +141,18 @@ class GuidedActionRecorder:
         parsed = urlsplit(url)
         if parsed.scheme not in ("http", "https") or not parsed.hostname:
             return ""
+        host = parsed.hostname.lower()
+        if ":" in host:
+            host = f"[{host}]"
+        try:
+            port = parsed.port
+        except ValueError:
+            return ""
+        if port and not ((parsed.scheme == "http" and port == 80) or
+                         (parsed.scheme == "https" and port == 443)):
+            host = f"{host}:{port}"
         route = parsed.path or "/"
-        return f"guided_actions_v1:{parsed.hostname.lower()}{route}"
+        return f"guided_actions_v1:{host}{route}"
 
     @staticmethod
     def serialize(events: list[dict[str, Any]]) -> list[str]:
