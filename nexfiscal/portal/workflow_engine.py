@@ -221,7 +221,7 @@ class CompanyWorkflow:
     def _execute(self) -> CompanyResult:
         out = CompanyResult(RunStatus.EM_EXECUCAO, steps=self.steps)
         try:
-            paths = self.layout.paths(self.row.cidade, self.row.cnpj_usuario, self.period.competence)
+            paths = self.layout.paths(self.row.cidade, self.row.razao_social, self.period.competence)
         except NexFiscalError as exc:
             return self._fail(out, Stage.ORGANIZACAO, exc, "Verifique as permissões da pasta de saída.")
 
