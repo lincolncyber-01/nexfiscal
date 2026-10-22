@@ -85,17 +85,15 @@ bissexto. Pode informar `MM/AAAA` na tela principal, e datas inicial/final manua
 ## Estrutura de saída
 
 ```
-ROOT/
+ROOT/                                  (única pasta configurável)
 └── Salvador/
-    └── 12.345.678-0001-01/
-        └── 09-2026/
-            ├── XML/            NFSe_<número>.xml  (conteúdo original, sem modificação)
-            ├── Livro_Fiscal/   Livro_Fiscal_<cnpj>_09-2026.<pdf|xml|xls|xlsx|csv>
-            └── _resumo.json    contagens e pendências (sem senhas)
+    └── RAZÃO SOCIAL COMPLETA DA EMPRESA LTDA/
+        ├── nome-original-do-portal.xml
+        ├── Livro Fiscal.pdf
+        └── _resumo.json               (resumo de execução, sem senhas)
 ```
 
-Nomes são sanitizados para qualquer sistema operacional. XML existente **e válido** não é baixado de novo; se
-estiver corrompido/incompleto, é baixado outra vez.
+A estrutura é sempre ROOT/Cidade/Razão Social. O nome da cidade e a razão social são preservados como nomes de pasta, removendo apenas caracteres inválidos no sistema de arquivos. Não são criadas subpastas por competência, tipo de arquivo ou portal. Os nomes originais dos XMLs e do Livro Fiscal são preservados. XML existente **e válido** não é baixado de novo; se estiver corrompido/incompleto, é baixado outra vez. Para bancos antigos, reimporte a planilha com a coluna RAZÃO SOCIAL antes de retomar o processamento.
 
 ## Funcionamento da memória dos portais
 
