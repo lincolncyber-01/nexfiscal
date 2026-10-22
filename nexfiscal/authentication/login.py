@@ -61,15 +61,29 @@ class LoginHandler:
     def login(self, url: str, user: str, password: str, company_label: str, city: str) -> str:
         """Executa o login. Retorna a URL inicial pós-login."""
         self._label, self._city, self._captcha_seen = company_label, city, False
-        self.reporter.stage(Stage.LOGIN, StepStatus.EM_ANDAMENTO, "Abrindo portal")
-        self.pm.goto(url)
+        self.reporter.stage(Stage.LOGIN, StepStatus.EM_ANDAMENTO, "Preparando portal")
+        known_portal = bool(self.engine.profile and any(self.engine.profile.selectors.values()))
+        if self.settings.guided_learning and not known_portal:
+            message = f"[STATUS: APRENDIZADO GUIADO ATIVO PARA: {url}] Abra o portal manualmente no navegador; nenhuma navegação automática será executada."
+            self.reporter.assist(message)
+            log.warning(message)
+            deadline = time.monotonic() + self.settings.assist_timeout_seconds
+            while time.monotonic() < deadline and self.page.url == "about:blank":
+                if self.control:
+                    self.control.checkpoint()
+                self.page.wait_for_timeout(400)
+            if self.page.url == "about:blank":
+                raise PortalTimeoutError("O operador não abriu manualmente o portal durante o aprendizado guiado.", stage="login")
+        else:
+            self.pm.goto(url)
         user_field = self.engine.find(pc.USER_FIELD, timeout=4, required=False)
         if user_field is None:  # alguns portais exigem clicar em "Acesso do contribuinte"
             entry = self.engine.find(pc.LOGIN_ENTRY, timeout=3, required=False)
             if entry is not None:
                 self.pm.click(entry, "link de acesso")
         self._remember_signature()
-        self.recognizer.probe_login(self.engine, self.gate.detector)
+        if not (self.settings.guided_learning and not known_portal):
+            self.recognizer.probe_login(self.engine, self.gate.detector)
 
         numeric_user = bool(re.fullmatch(r"[\d.\-/\s]+", user.strip()))
         login_url = self.page.url
