@@ -23,8 +23,8 @@ A opção fica em `Settings.guided_learning` e é persistida no arquivo de confi
 - O registro de eventos é uma trilha estruturada de observação, não um script bruto de replay. O NexFiscal usa seus fluxos fiscais tipados para preencher credenciais, competências, executar downloads e validar arquivos. Reproduzir cliques cegamente seria inseguro (poderia submeter formulários ou repetir downloads) e os valores de campos são intencionalmente omitidos.
 - Se um seletor salvo falhar, o motor não tenta descobrir substitutos automaticamente no modo guiado. A etapa falha de forma controlada ou solicita seleção assistida conforme a configuração; a execução não deve ser considerada concluída só porque existe um registro de eventos.
 
-The table portal_flows stores events as JSON strings, preserving compatibility with the existing SQLite structure.
-Settings.guided_learning controls this behavior and remains enabled by default.
+A tabela portal_flows armazena os eventos como strings JSON, preservando a compatibilidade com a estrutura SQLite existente.
+A opção Settings.guided_learning controla esse comportamento e permanece habilitada por padrão.
 
 ## Registro estruturado de ações guiadas
 
