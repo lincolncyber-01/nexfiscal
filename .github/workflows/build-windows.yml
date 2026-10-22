@@ -1,6 +1,14 @@
 name: Build Windows
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - "main.py"
+      - "nexfiscal/**"
+      - "nexfiscal.spec"
+      - "requirements.txt"
+      - "LEIA-ME.txt"
+      - ".github/workflows/build-windows.yml"
   push:
     tags: ["v*"]
 jobs:
@@ -19,10 +27,19 @@ jobs:
         timeout-minutes: 10
         env:
           PLAYWRIGHT_BROWSERS_PATH: "0"
-        run: playwright install chromium
+        run: python -m playwright install chromium
+      - name: Executar testes
+        timeout-minutes: 10
+        run: python -m pytest
       - name: Gerar executavel
         timeout-minutes: 20
         run: pyinstaller --noconfirm --clean nexfiscal.spec
+      - name: Copiar Chromium para a pasta portatil
+        shell: pwsh
+        run: |
+          $package = python -c "import pathlib, playwright; print(pathlib.Path(playwright.__file__).parent / 'driver' / 'package' / '.local-browsers')"
+          if (!(Test-Path $package)) { throw "Navegador Playwright nao encontrado em $package" }
+          Copy-Item -Path $package -Destination "dist/NexFiscal/ms-playwright" -Recurse
       - name: Copiar LEIA-ME
         shell: pwsh
         run: Copy-Item LEIA-ME.txt dist\NexFiscal\
@@ -34,20 +51,4 @@ jobs:
         with:
           name: NexFiscal-Windows
           path: NexFiscal-Windows.zip
-      - name: Diagnostico - abrir o executavel (apos entregar o zip)
-        timeout-minutes: 3
-        continue-on-error: true
-        shell: pwsh
-        run: |
-          $p = Start-Process -FilePath "dist\NexFiscal\NexFiscal.exe" -ArgumentList "--version" -PassThru
-          if (-not $p.WaitForExit(40000)) {
-            Write-Output "TRAVOU: o executavel nao terminou em 40 segundos"
-            $p.Kill()
-          } else {
-            Write-Output "Codigo de saida: $($p.ExitCode)"
-          }
-          $d = Join-Path $env:USERPROFILE ".nexfiscal\logs"
-          foreach ($f in "crash.log", "stdio.log") {
-            $path = Join-Path $d $f
-            if (Test-Path $path) { Write-Output "=== $f ==="; Get-Content $path -Tail 40 }
-          }
+          retention-days: 14
