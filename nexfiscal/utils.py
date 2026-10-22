@@ -72,7 +72,7 @@ def sanitize_name(name: str, replacement: str = "-") -> str:
     cleaned = _INVALID_FS_CHARS.sub(replacement, name or "").strip().strip(".")
     cleaned = re.sub(r"\s+", " ", cleaned)
     reserved = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)),
-                *(f"lpt{i}" for i in range(1, 10)}
+                *(f"lpt{i}" for i in range(1, 10))}
                 }
     if cleaned.lower() in reserved:
         cleaned = f"_{cleaned}"
