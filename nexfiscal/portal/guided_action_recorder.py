@@ -15,7 +15,7 @@ _INSTALL_RECORDER = r"""
   if (window.__nexfiscalRecorderInstalled) return;
   window.__nexfiscalRecorderInstalled = true;
   window.__nexfiscalRecordedActions = [];
-  const norm = value => String(value || '').replace(/\\s+/g, ' ').trim().slice(0, 120);
+  const norm = value => String(value || '').replace(/\s+/g, ' ').trim().slice(0, 120);
   function selector(el) {
     if (!el || el.nodeType !== 1) return null;
     if (el.id && document.querySelectorAll('#' + CSS.escape(el.id)).length === 1)
