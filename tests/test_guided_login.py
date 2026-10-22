@@ -33,3 +33,18 @@ def test_login_navigation_is_automatic_only_after_essential_selectors_are_learne
 
 def test_portal_without_profile_never_counts_as_known_login_flow():
     assert not _handler(None)._has_known_login_flow()
+
+
+
+def test_unknown_portal_login_submission_is_left_to_operator():
+    handler = LoginHandler.__new__(LoginHandler)
+    handler.engine = SimpleNamespace(find=__import__("unittest.mock", fromlist=["Mock"]).Mock())
+    handler.page = SimpleNamespace(url="https://portal.example/login")
+    handler.reporter = __import__("unittest.mock", fromlist=["Mock"]).Mock()
+    handler.pm = __import__("unittest.mock", fromlist=["Mock"]).Mock()
+
+    handler._request_manual_submit()
+
+    handler.engine.find.assert_called_once_with(pc.LOGIN_BUTTON, timeout=6)
+    handler.pm.click.assert_not_called()
+    assert "Clique manualmente" in handler.reporter.assist.call_args.args[0]
