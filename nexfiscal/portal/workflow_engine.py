@@ -194,9 +194,13 @@ class CompanyWorkflow:
         if self.action_recorder is None:
             return
         try:
-            events = self.action_recorder.drain()
-        except PlaywrightError:
-            log.warning("Não foi possível coletar eventos guiados; a execução segue sem gravar esta sessão.")
+            events = [
+                GuidedActionRecorder._validate(event)
+                for event in self.action_recorder.drain()
+            ]
+            events = [event for event in events if event["url"].startswith(("http://", "https://"))]
+        except Exception:
+            log.warning("Não foi possível coletar eventos guiados; a execução segue sem gravar esta sessão.", exc_info=True)
             return
         if not events:
             return

@@ -58,12 +58,22 @@ class LoginHandler:
     def looks_logged_out(self) -> bool:
         return self._password_visible()
 
+    def _has_known_login_flow(self) -> bool:
+        """Só automatiza a entrada quando os seletores essenciais do login foram aprendidos."""
+        profile = self.engine.profile
+        if profile is None:
+            return False
+        return all(
+            profile.has(spec.stage.value, spec.key)
+            for spec in (pc.USER_FIELD, pc.PASSWORD_FIELD, pc.LOGIN_BUTTON)
+        )
+
     # ------------------------------------------------------------- fluxo ----
     def login(self, url: str, user: str, password: str, company_label: str, city: str) -> str:
         """Executa o login. Retorna a URL inicial pós-login."""
         self._label, self._city, self._captcha_seen = company_label, city, False
         self.reporter.stage(Stage.LOGIN, StepStatus.EM_ANDAMENTO, "Preparando portal")
-        known_portal = bool(self.engine.profile and any(self.engine.profile.selectors.values()))
+        known_portal = self._has_known_login_flow()
         if self.settings.guided_learning and not known_portal:
             message = f"[STATUS: APRENDIZADO GUIADO ATIVO PARA: {url}] Abra o portal manualmente no navegador; nenhuma navegação automática será executada."
             self.reporter.assist(message)
@@ -79,6 +89,9 @@ class LoginHandler:
                 self.page.wait_for_timeout(400)
             else:
                 raise PortalTimeoutError("O operador não abriu manualmente o portal correto durante o aprendizado guiado.", stage="login")
+            # Detectar e sinalizar CAPTCHA assim que o operador abrir o portal,
+            # antes de solicitar qualquer interação com os campos de login.
+            self._wait_captcha()
         else:
             self.pm.goto(url)
         user_field = self.engine.find(pc.USER_FIELD, timeout=4, required=False)
