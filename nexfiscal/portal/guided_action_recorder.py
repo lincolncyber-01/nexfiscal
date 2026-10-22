@@ -93,13 +93,25 @@ class GuidedActionRecorder:
               return items;
             }"""
         )
-        return [self._validate(event) for event in events]
+        validated = [self._validate(event) for event in events]
+        return [event for event in validated if event["url"].startswith(("http://", "https://"))]
 
     @staticmethod
     def _validate(event: dict[str, Any]) -> dict[str, Any]:
         """Normaliza o esquema persistido; URLs sem query/fragment evitam tokens em links."""
         parsed = urlsplit(str(event.get("url", "")))
-        safe_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            safe_url = ""
+        else:
+            host = parsed.hostname
+            try:
+                port = parsed.port
+            except ValueError:
+                port = None
+            if port and not ((parsed.scheme == "http" and port == 80) or
+                             (parsed.scheme == "https" and port == 443)):
+                host = f"{host}:{port}"
+            safe_url = f"{parsed.scheme}://{host}{parsed.path}"
         selector = event.get("selector") or {}
         return {
             "order": int(event.get("order", 0)),
@@ -114,6 +126,15 @@ class GuidedActionRecorder:
             "label": str(event.get("label", ""))[:120],
             "checked": event.get("checked") if isinstance(event.get("checked"), bool) else None,
         }
+
+    @staticmethod
+    def flow_name(url: str) -> str:
+        """Chave estável por rota, sem credenciais, query string ou fragmento."""
+        parsed = urlsplit(url)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            return ""
+        route = parsed.path or "/"
+        return f"guided_actions_v1:{parsed.hostname.lower()}{route}"
 
     @staticmethod
     def serialize(events: list[dict[str, Any]]) -> list[str]:
