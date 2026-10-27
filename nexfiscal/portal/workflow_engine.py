@@ -275,6 +275,7 @@ class CompanyWorkflow:
         try:
             return self._execute()
         finally:
+            self._stop_guided_download_capture()
             self._persist_guided_actions()
 
     def _persist_guided_actions(self) -> None:
@@ -330,10 +331,7 @@ class CompanyWorkflow:
             res = self._fail(out, Stage.LOGIN, exc, "Empresa marcada com erro." if not infra
                              else "Nova tentativa com navegador limpo.")
             res.retry_company = infra
-            self._stop_guided_download_capture()
             return res
-        finally:
-            self._stop_guided_download_capture()
 
         # --------------------------------------------------------- XML ---
         if need_xml:
