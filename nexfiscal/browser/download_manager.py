@@ -58,20 +58,31 @@ class DownloadManager:
         try:
             trigger()
             deadline = time.monotonic() + (timeout if timeout is not None else self.timeout)
+            popup_ready_at: float | None = None
             while time.monotonic() < deadline:
+                # O evento "page" pode chegar antes do evento "download" em portais
+                # que abrem uma aba transitória para iniciar a exportação. Não trate
+                # a URL da nova aba como arquivo antes de dar tempo ao evento real.
                 if downloads:
                     return self._save_download(downloads[0])
-                if popups and self._popup_ready(popups[0]):
+                if popups and self._popup_ready(popups[0]) and popup_ready_at is None:
+                    popup_ready_at = time.monotonic()
+                if popup_ready_at is not None and time.monotonic() - popup_ready_at >= 2.0:
                     break
                 if page.url != url_before and not popups:
                     page.wait_for_timeout(600)
                     if not downloads:
                         break
-                page.wait_for_timeout(250)
+                page.wait_for_timeout(100)
             if downloads:
                 return self._save_download(downloads[0])
             if popups:
-                return self._from_url(popups[0], popups[0].url, close=True)
+                popup_url = popups[0].url
+                # Se a aba transitória terminou em about:blank/foi fechada, não
+                # tente baixar uma URL vazia: registre uma falha recuperável.
+                if not popup_url or popup_url == "about:blank":
+                    raise DownloadError("O portal abriu uma aba de exportação, mas não entregou o arquivo.")
+                return self._from_url(popups[0], popup_url, close=True)
             if page.url != url_before:
                 captured = self._from_url(page, page.url)
                 if detect_kind(read_head(captured.path)) == "html":
