@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -33,6 +34,9 @@ from ..fiscal_book.downloader import LivroFileStore
 from ..fiscal_book.fiscal_book import FiscalBookHandler
 from ..logs.logger import SECRETS
 from ..nfse.xml_downloader import XmlDownloader, XmlStats
+from ..nfse.xml_validator import XmlValidator
+from ..storage.file_manager import detect_kind, read_head, move_atomic
+from ..utils import sanitize_name
 from ..storage.organizer import OutputLayout
 from .portal_memory import PortalProfile
 from .guided_action_recorder import GuidedActionRecorder
@@ -91,6 +95,9 @@ class CompanyWorkflow:
         self.steps: dict[str, str] = dict(previous.steps)
         self.home_url = ""
         self.cnpj = row.display
+        self._guided_download_dest: Path | None = None
+        self._guided_download_context = None
+        self._guided_download_pages: set[int] = set()
 
     # --------------------------------------------------------------- helpers ---
     def _set(self, stage: Stage, status: StepStatus, msg: str = "") -> None:
@@ -108,6 +115,94 @@ class CompanyWorkflow:
         log.error("ERRO | Empresa: %s | Cidade: %s | Etapa: %s | Problema: %s | Ação: %s",
                   self.cnpj, self.row.cidade, stage.title, problem, action)
         self.pm.screenshot_on_error(stage.value, self.settings.log_dir / "screenshots")
+
+    def _capture_guided_download(self, download) -> None:  # type: ignore[no-untyped-def]
+        """Persist manual downloads initiated during guided learning."""
+        dest = self._guided_download_dest
+        if dest is None:
+            return
+        tmp = self.settings.tmp_dir / ("guided-" + uuid.uuid4().hex[:12])
+        try:
+            dest.mkdir(parents=True, exist_ok=True)
+            tmp.mkdir(parents=True, exist_ok=True)
+            name = sanitize_name(download.suggested_filename or "download.xml") or "download.xml"
+            source = tmp / name
+            download.save_as(str(source))
+            failure = download.failure()
+            if failure:
+                raise OSError(failure)
+            candidates = self.dm.extract_zip(source) if detect_kind(read_head(source)) == "zip" else [source]
+            validator = XmlValidator()
+            saved = 0
+            for candidate in candidates:
+                if candidate.suffix.lower() != ".xml":
+                    continue
+                info = validator.validate_file(candidate)
+                if not info.valid:
+                    log.warning("Download guiado recebido, mas XML não validado: %s (%s)", name, info.reason)
+                    continue
+                if info.is_consulta_sem_notas:
+                    base = "Resposta_Consulta_NFSe_Sem_Notas_" + info.sha256[:12] + ".xml"
+                else:
+                    base = ("NFSe_" + sanitize_name(info.numero) + ".xml") if info.numero else name
+                target = dest / base
+                if target.exists():
+                    if target.stat().st_size == candidate.stat().st_size and target.read_bytes() == candidate.read_bytes():
+                        candidate.unlink(missing_ok=True)
+                        saved += 1
+                        log.info("Download guiado já existe no destino: %s", target)
+                        continue
+                    target = dest / (Path(base).stem + "_" + info.sha256[:8] + ".xml")
+                move_atomic(candidate, target)
+                if not target.is_file() or target.stat().st_size == 0:
+                    raise OSError("arquivo não confirmado no destino: " + str(target))
+                saved += 1
+                log.info("Download guiado capturado e salvo: origem=Chromium | destino=%s | bytes=%d", target, target.stat().st_size)
+            if saved == 0:
+                log.warning("Download guiado recebido, mas nenhum XML válido foi salvo. Arquivo=%s", name)
+        except Exception:
+            log.exception("Falha ao salvar download manual do aprendizado guiado no destino da empresa: %s", dest)
+        finally:
+            import shutil
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def _start_guided_download_capture(self, dest: Path) -> None:
+        """Observe operator downloads only during guided login/learning."""
+        if not self.settings.guided_learning:
+            return
+        self._guided_download_dest = dest
+        context = self.page.context
+        self._guided_download_context = context
+        self._guided_download_pages = set()
+        def attach(page: Page) -> None:
+            key = id(page)
+            if key in self._guided_download_pages:
+                return
+            self._guided_download_pages.add(key)
+            page.on("download", self._capture_guided_download)
+        for page in context.pages:
+            attach(page)
+        context.on("page", attach)
+        self._guided_attach_page = attach
+        log.info("Captura de downloads manuais ativada. Destino XML: %s", dest)
+
+    def _stop_guided_download_capture(self) -> None:
+        context = self._guided_download_context
+        if context is None:
+            return
+        try:
+            context.remove_listener("page", self._guided_attach_page)
+        except Exception:
+            pass
+        for page in list(context.pages):
+            try:
+                page.remove_listener("download", self._capture_guided_download)
+            except Exception:
+                pass
+        self._guided_download_context = None
+        self._guided_download_dest = None
+        self._guided_download_pages = set()
+        log.info("Captura de downloads manuais desativada.")
 
     def _goto_home(self) -> None:
         if self.home_url and self.page.url != self.home_url:
@@ -225,6 +320,7 @@ class CompanyWorkflow:
 
         # ------------------------------------------------------------ login ---
         try:
+            self._start_guided_download_capture(paths.xml_dir)
             self._attempt("Login", self._login)
             self._log(Stage.LOGIN, "OK", "Login realizado")
         except CancelledError:
@@ -234,7 +330,10 @@ class CompanyWorkflow:
             res = self._fail(out, Stage.LOGIN, exc, "Empresa marcada com erro." if not infra
                              else "Nova tentativa com navegador limpo.")
             res.retry_company = infra
+            self._stop_guided_download_capture()
             return res
+        finally:
+            self._stop_guided_download_capture()
 
         # --------------------------------------------------------- XML ---
         if need_xml:
