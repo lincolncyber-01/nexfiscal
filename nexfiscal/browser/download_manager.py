@@ -167,25 +167,62 @@ class DownloadManager:
             return False
 
     def _from_url(self, page: Page, url: str, close: bool = False) -> CapturedFile:
-        """Baixa o conteúdo de uma URL com os cookies da sessão (PDF/XML aberto no visualizador)."""
+        """Fetch inline XML/PDF with session cookies and bounded retry for transient failures."""
+        body: bytes | None = None
+        name = "arquivo"
         try:
-            resp = page.context.request.get(url, timeout=self.timeout * 1000)
-            if not resp.ok:
-                raise DownloadError(f"O portal respondeu HTTP {resp.status} ao baixar o arquivo.")
-            body = resp.body()
-            disp = resp.headers.get("content-disposition", "")
-            m = re.search(r"filename\*?=(?:UTF-8'')?\"?([^\";]+)", disp)
-            name = unquote(m.group(1)) if m else (Path(unquote(urlparse(url).path)).name or "arquivo")
-        except PlaywrightError as exc:
-            raise DownloadError(f"Não foi possível obter o arquivo: {exc}") from exc
+            for attempt in range(1, 4):
+                try:
+                    resp = page.context.request.get(url, timeout=self.timeout * 1000)
+                    if not resp.ok:
+                        retryable_status = resp.status in (408, 425, 429) or resp.status >= 500
+                        if retryable_status and attempt < 3:
+                            delay = 0.2 * (2 ** (attempt - 1))
+                            log.warning("HTTP transitório ao obter arquivo; tentativa %d/3 | status=%d | url=%s",
+                                        attempt, resp.status, url,
+                                        extra={"event": "inline_download_http_retry", "attempt": attempt,
+                                               "http_status": resp.status, "delay_seconds": delay})
+                            time.sleep(delay)
+                            continue
+                        raise DownloadError(f"O portal respondeu HTTP {resp.status} ao baixar o arquivo.")
+                    body = resp.body()
+                    if not body:
+                        if attempt < 3:
+                            delay = 0.2 * (2 ** (attempt - 1))
+                            log.warning("Portal retornou conteúdo vazio; repetindo download inline | tentativa=%d/3 | url=%s",
+                                        attempt, url, extra={"event": "inline_download_empty_retry",
+                                                             "attempt": attempt, "delay_seconds": delay})
+                            time.sleep(delay)
+                            continue
+                        raise DownloadError("O portal respondeu sem conteúdo para o arquivo solicitado.")
+                    disp = resp.headers.get("content-disposition", "")
+                    match = re.search(r"filename\\*?=(?:UTF-8'')?\\\"?([^\\\";]+)", disp)
+                    name = unquote(match.group(1)) if match else (Path(unquote(urlparse(url).path)).name or "arquivo")
+                    break
+                except PlaywrightError as exc:
+                    if attempt == 3:
+                        raise DownloadError(f"Não foi possível obter o arquivo após 3 tentativas: {exc}") from exc
+                    delay = 0.2 * (2 ** (attempt - 1))
+                    log.warning("Falha Playwright transitória ao obter arquivo inline; tentativa %d/3 | erro=%s",
+                                attempt, exc, extra={"event": "inline_download_retry", "attempt": attempt,
+                                                    "delay_seconds": delay})
+                    time.sleep(delay)
+            if not body:
+                raise DownloadError("O portal não entregou um arquivo válido.")
         finally:
             if close:
                 try:
                     page.close()
                 except PlaywrightError:
-                    pass
+                    log.debug("Popup já encerrado após a leitura do arquivo inline.")
         target = self._target(name)
-        target.write_bytes(body)
+        try:
+            target.write_bytes(body)
+            if not target.is_file() or target.stat().st_size != len(body) or target.stat().st_size == 0:
+                raise OSError("O conteúdo recebido não foi gravado integralmente no temporário.")
+        except OSError as exc:
+            target.unlink(missing_ok=True)
+            raise DownloadError(f"Não foi possível persistir o arquivo obtido do portal: {exc}") from exc
         return CapturedFile(target, name)
 
     @staticmethod
