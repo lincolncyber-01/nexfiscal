@@ -120,7 +120,8 @@ class LoginHandler:
             if self.is_logged_in(login_url):  # o usuário já enviou o formulário
                 break
             if self._password_visible():
-                if self._manual_guided_login:
+                # CAPTCHA exige ação manual: nunca submeter o formulário automaticamente depois dele.
+                if self._manual_guided_login or self._captcha_seen:
                     self._request_manual_submit()
                 else:
                     self._submit()
@@ -158,16 +159,22 @@ class LoginHandler:
         )
 
     def _request_manual_submit(self) -> None:
-        """Aprende o seletor do botão, mas deixa o envio do formulário para o operador."""
+        """Learn the button selector but always leave submission to the operator."""
         try:
             self.engine.find(pc.LOGIN_BUTTON, timeout=6)
         except ElementNotFoundError:
             log.warning("Botão de login não pôde ser aprendido antes do envio manual.")
-        self.reporter.assist(
-            f"[STATUS: APRENDIZADO GUIADO ATIVO PARA: {self.page.url}] "
-            "Os campos foram preenchidos. Clique manualmente em Entrar no navegador; "
-            "o NexFiscal não enviará o formulário neste primeiro aprendizado."
-        )
+        if getattr(self, "_captcha_seen", False):
+            instruction = (
+                "O CAPTCHA foi resolvido manualmente. Por segurança, clique manualmente em Entrar/Acessar; "
+                "o NexFiscal não enviará o formulário automaticamente depois do CAPTCHA."
+            )
+        else:
+            instruction = (
+                "Os campos foram preenchidos. Clique manualmente em Entrar no navegador; "
+                "o NexFiscal não enviará o formulário durante este primeiro aprendizado."
+            )
+        self.reporter.assist(f"[STATUS: APRENDIZADO GUIADO ATIVO PARA: {self.page.url}] {instruction}")
 
     def _wait_captcha(self) -> None:
         if self.gate.wait_if_present(self._label, self._city):
@@ -193,6 +200,11 @@ class LoginHandler:
         self.pm.fill(pf, password, secret=True)
 
     def _submit(self) -> None:
+        # Defesa em profundidade contra futuras chamadas fora do fluxo protegido.
+        if self._captcha_seen:
+            raise LoginError(
+                "CAPTCHA resolvido. Por segurança, clique manualmente no botão de acesso no navegador."
+            )
         try:
             btn = self.engine.find(pc.LOGIN_BUTTON, timeout=6)
             self.pm.click(btn, "botão de login")

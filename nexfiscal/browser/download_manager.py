@@ -14,7 +14,7 @@ from urllib.parse import unquote, urlparse
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
-from ..exceptions import DownloadError
+from ..exceptions import DownloadError, NexFiscalError
 from ..storage.file_manager import detect_kind, read_head
 from ..utils import sanitize_name
 
@@ -37,9 +37,10 @@ class DownloadManager:
         return folder / (sanitize_name(name) or "download.bin")
 
     def capture(self, page: Page, trigger: Callable[[], None], timeout: float | None = None) -> CapturedFile:
-        """Executa ``trigger`` (clique) e devolve o arquivo resultante.
+        """Run a click and capture a download, popup file or file navigation.
 
-        Cobre: evento de download; popup/aba com o arquivo; navegação da própria página para o arquivo.
+        A click may report a Playwright error after the browser has already started a download.
+        Preserve an observed file rather than discarding it with the click error.
         """
         downloads: list = []
         popups: list[Page] = []
@@ -47,6 +48,7 @@ class DownloadManager:
 
         def on_download(dl) -> None:  # type: ignore[no-untyped-def]
             downloads.append(dl)
+            log.debug("Evento Playwright de download recebido | nome=%s", dl.suggested_filename)
 
         def on_page(p: Page) -> None:
             popups.append(p)
@@ -55,14 +57,20 @@ class DownloadManager:
         page.on("download", on_download)
         ctx.on("page", on_page)
         url_before = page.url
+        trigger_error: PlaywrightError | None = None
         try:
-            trigger()
+            try:
+                trigger()
+            except (PlaywrightError, NexFiscalError) as exc:
+                trigger_error = exc
+                if not downloads and not popups:
+                    raise DownloadError(f"O clique não concluiu a ação de download: {exc}") from exc
+                log.warning("A ação de clique falhou depois que o portal já iniciou um download/aba; tentando capturar o arquivo observado.",
+                            extra={"event": "download_trigger_error_after_event", "error_type": type(exc).__name__,
+                                   "download_events": len(downloads), "popups": len(popups)})
             deadline = time.monotonic() + (timeout if timeout is not None else self.timeout)
             popup_ready_at: float | None = None
             while time.monotonic() < deadline:
-                # O evento "page" pode chegar antes do evento "download" em portais
-                # que abrem uma aba transitória para iniciar a exportação. Não trate
-                # a URL da nova aba como arquivo antes de dar tempo ao evento real.
                 if downloads:
                     return self._save_download(downloads[0])
                 if popups and self._popup_ready(popups[0]) and popup_ready_at is None:
@@ -70,50 +78,86 @@ class DownloadManager:
                 if popup_ready_at is not None and time.monotonic() - popup_ready_at >= 2.0:
                     break
                 if page.url != url_before and not popups:
-                    page.wait_for_timeout(600)
+                    try:
+                        page.wait_for_timeout(600)
+                    except PlaywrightError as exc:
+                        if downloads:
+                            break
+                        raise DownloadError("A página fechou durante a navegação de exportação.") from exc
                     if not downloads:
                         break
-                page.wait_for_timeout(100)
+                try:
+                    page.wait_for_timeout(100)
+                except PlaywrightError as exc:
+                    if downloads or popups:
+                        break
+                    raise DownloadError("A página foi encerrada antes de confirmar o download.") from exc
             if downloads:
                 return self._save_download(downloads[0])
             if popups:
                 popup_url = popups[0].url
-                # Se a aba transitória terminou em about:blank/foi fechada, não
-                # tente baixar uma URL vazia: registre uma falha recuperável.
                 if not popup_url or popup_url == "about:blank":
                     raise DownloadError("O portal abriu uma aba de exportação, mas não entregou o arquivo.")
                 return self._from_url(popups[0], popup_url, close=True)
             if page.url != url_before:
                 captured = self._from_url(page, page.url)
                 if detect_kind(read_head(captured.path)) == "html":
-                    # navegação comum para outra tela do portal: não é um arquivo
                     captured.path.unlink(missing_ok=True)
                     raise DownloadError("O clique não iniciou nenhum download.")
                 try:
                     page.go_back()
                 except PlaywrightError:
-                    pass
+                    log.warning("Não foi possível retornar à página anterior após capturar o arquivo.", exc_info=True)
                 return captured
-            raise DownloadError("O clique não iniciou nenhum download.")
+            detail = f" Ação original: {trigger_error}" if trigger_error else ""
+            raise DownloadError("O clique não iniciou nenhum download." + detail)
         finally:
             try:
                 page.remove_listener("download", on_download)
-            except Exception:
-                pass
-            ctx.remove_listener("page", on_page)
+            except PlaywrightError:
+                log.debug("Página principal já encerrada ao limpar listener de download.")
+            for popup in popups:
+                try:
+                    popup.remove_listener("download", on_download)
+                except PlaywrightError:
+                    log.debug("Popup já encerrado ao limpar listener de download.")
+            try:
+                ctx.remove_listener("page", on_page)
+            except PlaywrightError:
+                log.debug("Contexto já encerrado ao limpar listener de nova página.")
 
-    # ------------------------------------------------------------------
     def _save_download(self, dl) -> CapturedFile:  # type: ignore[no-untyped-def]
-        name = dl.suggested_filename or "download.bin"
-        target = self._target(name)
-        try:
-            dl.save_as(str(target))
-        except PlaywrightError as exc:
-            raise DownloadError(f"Download interrompido: {exc}") from exc
+        name = sanitize_name(dl.suggested_filename or "download.bin") or "download.bin"
         failure = dl.failure()
         if failure:
-            raise DownloadError(f"Download interrompido: {failure}")
-        return CapturedFile(target, name)
+            raise DownloadError(f"Download interrompido pelo navegador: {failure}")
+        last_error: BaseException | None = None
+        for attempt in range(1, 4):
+            target = self._target(name)
+            try:
+                dl.save_as(str(target))
+                failure = dl.failure()
+                if failure:
+                    raise DownloadError(f"Download interrompido: {failure}")
+                if not target.is_file() or target.stat().st_size <= 0:
+                    raise OSError("Playwright não produziu um arquivo não vazio.")
+                return CapturedFile(target, name)
+            except (PlaywrightError, OSError) as exc:
+                last_error = exc
+                target.unlink(missing_ok=True)
+                try:
+                    target.parent.rmdir()
+                except OSError:
+                    pass
+                if attempt == 3:
+                    break
+                delay = 0.15 * (2 ** (attempt - 1))
+                log.warning("Falha transitória ao salvar download Playwright; tentativa %d/3 | nome=%s | erro=%s",
+                            attempt, name, exc, extra={"event": "playwright_download_save_retry",
+                                                       "attempt": attempt, "download_name": name,
+                                                       "delay_seconds": delay})
+                time.sleep(delay)
+        raise DownloadError(f"Não foi possível salvar o download '{name}' após 3 tentativas: {last_error}") from last_error
 
     @staticmethod
     def _popup_ready(popup: Page) -> bool:
@@ -123,25 +167,62 @@ class DownloadManager:
             return False
 
     def _from_url(self, page: Page, url: str, close: bool = False) -> CapturedFile:
-        """Baixa o conteúdo de uma URL com os cookies da sessão (PDF/XML aberto no visualizador)."""
+        """Fetch inline XML/PDF with session cookies and bounded retry for transient failures."""
+        body: bytes | None = None
+        name = "arquivo"
         try:
-            resp = page.context.request.get(url, timeout=self.timeout * 1000)
-            if not resp.ok:
-                raise DownloadError(f"O portal respondeu HTTP {resp.status} ao baixar o arquivo.")
-            body = resp.body()
-            disp = resp.headers.get("content-disposition", "")
-            m = re.search(r"filename\*?=(?:UTF-8'')?\"?([^\";]+)", disp)
-            name = unquote(m.group(1)) if m else (Path(unquote(urlparse(url).path)).name or "arquivo")
-        except PlaywrightError as exc:
-            raise DownloadError(f"Não foi possível obter o arquivo: {exc}") from exc
+            for attempt in range(1, 4):
+                try:
+                    resp = page.context.request.get(url, timeout=self.timeout * 1000)
+                    if not resp.ok:
+                        retryable_status = resp.status in (408, 425, 429) or resp.status >= 500
+                        if retryable_status and attempt < 3:
+                            delay = 0.2 * (2 ** (attempt - 1))
+                            log.warning("HTTP transitório ao obter arquivo; tentativa %d/3 | status=%d | url=%s",
+                                        attempt, resp.status, url,
+                                        extra={"event": "inline_download_http_retry", "attempt": attempt,
+                                               "http_status": resp.status, "delay_seconds": delay})
+                            time.sleep(delay)
+                            continue
+                        raise DownloadError(f"O portal respondeu HTTP {resp.status} ao baixar o arquivo.")
+                    body = resp.body()
+                    if not body:
+                        if attempt < 3:
+                            delay = 0.2 * (2 ** (attempt - 1))
+                            log.warning("Portal retornou conteúdo vazio; repetindo download inline | tentativa=%d/3 | url=%s",
+                                        attempt, url, extra={"event": "inline_download_empty_retry",
+                                                             "attempt": attempt, "delay_seconds": delay})
+                            time.sleep(delay)
+                            continue
+                        raise DownloadError("O portal respondeu sem conteúdo para o arquivo solicitado.")
+                    disp = resp.headers.get("content-disposition", "")
+                    match = re.search(r"filename\*?=(?:UTF-8'')?\"?([^\";]+)", disp)
+                    name = unquote(match.group(1)) if match else (Path(unquote(urlparse(url).path)).name or "arquivo")
+                    break
+                except PlaywrightError as exc:
+                    if attempt == 3:
+                        raise DownloadError(f"Não foi possível obter o arquivo após 3 tentativas: {exc}") from exc
+                    delay = 0.2 * (2 ** (attempt - 1))
+                    log.warning("Falha Playwright transitória ao obter arquivo inline; tentativa %d/3 | erro=%s",
+                                attempt, exc, extra={"event": "inline_download_retry", "attempt": attempt,
+                                                    "delay_seconds": delay})
+                    time.sleep(delay)
+            if not body:
+                raise DownloadError("O portal não entregou um arquivo válido.")
         finally:
             if close:
                 try:
                     page.close()
                 except PlaywrightError:
-                    pass
+                    log.debug("Popup já encerrado após a leitura do arquivo inline.")
         target = self._target(name)
-        target.write_bytes(body)
+        try:
+            target.write_bytes(body)
+            if not target.is_file() or target.stat().st_size != len(body) or target.stat().st_size == 0:
+                raise OSError("O conteúdo recebido não foi gravado integralmente no temporário.")
+        except OSError as exc:
+            target.unlink(missing_ok=True)
+            raise DownloadError(f"Não foi possível persistir o arquivo obtido do portal: {exc}") from exc
         return CapturedFile(target, name)
 
     @staticmethod
