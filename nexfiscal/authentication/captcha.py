@@ -84,6 +84,13 @@ class ManualCaptchaGate:
 
     def wait_if_present(self, empresa: str, cidade: str) -> bool:
         """Se houver CAPTCHA: pausa e aguarda a resolução manual. Devolve True se houve CAPTCHA."""
+        if self.control:
+            clear_confirmation = getattr(self.control, "clear_captcha_confirmation", None)
+            clear_progress = getattr(self.control, "clear_guided_progress", None)
+            if callable(clear_confirmation):
+                clear_confirmation()
+            if callable(clear_progress):
+                clear_progress()
         kind = self.detector.detect()
         if kind is None:
             return False
@@ -103,6 +110,14 @@ class ManualCaptchaGate:
         while time.monotonic() < deadline:
             if self.control:
                 self.control.checkpoint()  # type: ignore[attr-defined]
+                consume_confirmation = getattr(self.control, "consume_captcha_confirmation", None)
+                if callable(consume_confirmation) and consume_confirmation():
+                    log.info("Operador confirmou que resolveu o CAPTCHA manualmente.")
+                    return True
+                consume_progress = getattr(self.control, "consume_guided_progress", None)
+                if callable(consume_progress) and consume_progress():
+                    log.info("Ação guiada produziu arquivo validado; liberando a espera bloqueada do CAPTCHA.")
+                    return True
             if self.detector.is_solved():
                 log.info("CAPTCHA resolvido.")
                 return True

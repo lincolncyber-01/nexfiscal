@@ -62,6 +62,8 @@ class RunControl:
     def __init__(self) -> None:
         self._paused = threading.Event()
         self._cancelled = threading.Event()
+        self._manual_captcha_confirmation = threading.Event()
+        self._guided_progress = threading.Event()
 
     def pause(self) -> None:
         self._paused.set()
@@ -72,6 +74,32 @@ class RunControl:
     def cancel(self) -> None:
         self._cancelled.set()
         self._paused.clear()
+
+    def confirm_captcha_resolved(self) -> None:
+        """Record the operator's explicit confirmation after manually solving CAPTCHA."""
+        self._manual_captcha_confirmation.set()
+
+    def clear_captcha_confirmation(self) -> None:
+        self._manual_captcha_confirmation.clear()
+
+    def consume_captcha_confirmation(self) -> bool:
+        confirmed = self._manual_captcha_confirmation.is_set()
+        if confirmed:
+            self._manual_captcha_confirmation.clear()
+        return confirmed
+
+    def mark_guided_progress(self) -> None:
+        """Signal that a manually initiated guided action produced a verified artifact."""
+        self._guided_progress.set()
+
+    def clear_guided_progress(self) -> None:
+        self._guided_progress.clear()
+
+    def consume_guided_progress(self) -> bool:
+        progressed = self._guided_progress.is_set()
+        if progressed:
+            self._guided_progress.clear()
+        return progressed
 
     @property
     def is_paused(self) -> bool:

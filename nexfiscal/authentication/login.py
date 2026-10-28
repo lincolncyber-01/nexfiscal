@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+from collections.abc import Callable
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
@@ -23,9 +24,11 @@ log = logging.getLogger("nexfiscal.login")
 
 class LoginHandler:
     def __init__(self, page: Page, engine: SelectorEngine, pm: PageManager, settings: Settings,
-                 reporter: CompanyReporter, control: object | None = None) -> None:
+                 reporter: CompanyReporter, control: object | None = None,
+                 guided_progress: Callable[[], bool] | None = None) -> None:
         self.page, self.engine, self.pm, self.settings = page, engine, pm, settings
         self.reporter, self.control = reporter, control
+        self.guided_progress = guided_progress
         self.gate = ManualCaptchaGate(page, settings.captcha_timeout_seconds, settings.headless,
                                       control, notify=reporter.captcha)
         self._captcha_seen = False
@@ -90,6 +93,8 @@ class LoginHandler:
             log.info(message)
             # Detectar/sinalizar CAPTCHA depois de abrir a URL e antes de interagir com login.
             self._wait_captcha()
+        if self._finish_guided_login_if_artifacts():
+            return self.page.url
         user_field = self.engine.find(pc.USER_FIELD, timeout=4, required=False)
         if user_field is None:
             entry = self.engine.find(pc.LOGIN_ENTRY, timeout=3, required=False)
@@ -117,6 +122,8 @@ class LoginHandler:
             self.pm.checkpoint()
             self._fill_credentials(user, password, numeric_user)
             self._wait_captcha()
+            if self._finish_guided_login_if_artifacts():
+                return self.page.url
             if self.is_logged_in(login_url):  # o usuário já enviou o formulário
                 break
             if self._password_visible():
@@ -143,6 +150,25 @@ class LoginHandler:
         self.reporter.stage(Stage.LOGIN, StepStatus.OK, "Login realizado")
         self.pm.settle()
         return self.page.url
+
+    def _finish_guided_login_if_artifacts(self) -> bool:
+        """A verified manual fiscal download proves the operator progressed past login."""
+        guided_progress = getattr(self, "guided_progress", None)
+        if not self._manual_guided_login or guided_progress is None:
+            return False
+        try:
+            progressed = guided_progress()
+        except Exception:
+            log.debug("Não foi possível consultar o progresso guiado; continuando login normal.", exc_info=True)
+            return False
+        if not progressed:
+            return False
+        self.reporter.stage(Stage.CAPTCHA, StepStatus.OK if self._captcha_seen else StepStatus.PULADO,
+                            "Resolução manual confirmada pela ação fiscal" if self._captcha_seen
+                            else "Sem CAPTCHA")
+        self.reporter.stage(Stage.LOGIN, StepStatus.OK, "Ação fiscal manual confirmada")
+        log.info("Login guiado considerado concluído após arquivo fiscal validado pelo download manual.")
+        return True
 
     def _wait_for_password_field(self) -> None:
         """Aguarda o operador chegar manualmente à tela de login sem clicar/navegar por ele."""

@@ -2,8 +2,11 @@
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+from nexfiscal.authentication.captcha import ManualCaptchaGate
 from nexfiscal.authentication.login import LoginHandler
 from nexfiscal.config import portal_config as pc
+from nexfiscal.database.models import Stage, StepStatus
+from nexfiscal.events import RunControl
 from nexfiscal.portal.portal_memory import PortalProfile
 
 
@@ -49,3 +52,38 @@ def test_unknown_portal_login_submission_is_left_to_operator():
     handler.engine.find.assert_called_once_with(pc.LOGIN_BUTTON, timeout=6)
     handler.pm.click.assert_not_called()
     assert "Clique manualmente" in handler.reporter.assist.call_args.args[0]
+
+
+
+def test_manual_captcha_confirmation_unblocks_gate_without_automating_challenge():
+    control = RunControl()
+
+    class PageStub:
+        def bring_to_front(self):
+            return None
+
+        def wait_for_timeout(self, _ms):
+            # Simulate the operator clicking the explicit confirmation in the GUI.
+            control.confirm_captcha_resolved()
+
+    gate = ManualCaptchaGate(
+        PageStub(), timeout_seconds=2, headless=False, control=control,
+    )
+    gate.detector = SimpleNamespace(detect=lambda: "image", is_solved=lambda: False)
+
+    assert gate.wait_if_present("Empresa", "Cidade") is True
+
+
+def test_guided_login_can_resume_after_a_verified_manual_fiscal_download():
+    handler = LoginHandler.__new__(LoginHandler)
+    handler._manual_guided_login = True
+    handler._captcha_seen = True
+    handler.guided_progress = lambda: True
+    handler.page = SimpleNamespace(url="https://portal.example/fiscal")
+    handler.reporter = Mock()
+
+    assert handler._finish_guided_login_if_artifacts() is True
+    assert handler.reporter.stage.call_args_list == [
+        ((Stage.CAPTCHA, StepStatus.OK, "Resolução manual confirmada pela ação fiscal"), {}),
+        ((Stage.LOGIN, StepStatus.OK, "Ação fiscal manual confirmada"), {}),
+    ]

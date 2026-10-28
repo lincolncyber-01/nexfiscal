@@ -10,6 +10,7 @@ Regras de falha:
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 import time
 import uuid
@@ -38,7 +39,7 @@ from ..fiscal_book.fiscal_book import FiscalBookHandler
 from ..logs.logger import SECRETS
 from ..nfse.xml_downloader import XmlDownloader, XmlStats
 from ..nfse.xml_validator import XmlValidator
-from ..storage.file_manager import detect_kind, read_head, move_atomic
+from ..storage.file_manager import detect_kind, read_head, move_atomic, validate_deliverable
 from ..utils import sanitize_name
 from ..storage.organizer import OutputLayout
 from .portal_memory import PortalProfile
@@ -94,7 +95,10 @@ class CompanyWorkflow:
             on_assist=lambda _spec, msg: reporter.assist(f"{row.display} ({row.cidade}): {msg}"),
             control=control, guided_learning=settings.guided_learning)
         self.dm = DownloadManager(settings.tmp_dir, settings.download_timeout_seconds)
-        self.login_handler = LoginHandler(page, self.engine, self.pm, settings, reporter, control)
+        self.login_handler = LoginHandler(
+            page, self.engine, self.pm, settings, reporter, control,
+            guided_progress=self._has_guided_artifacts,
+        )
         self.steps: dict[str, str] = dict(previous.steps)
         self.home_url = ""
         self.cnpj = row.display
@@ -104,6 +108,9 @@ class CompanyWorkflow:
         self._guided_attach_page = None
         self._guided_download_events = 0
         self._guided_download_saved = 0
+        self._guided_book_saved = 0
+        self._guided_saved_xml_paths: list[Path] = []
+        self._guided_saved_book_paths: list[Path] = []
         self._guided_download_failures = 0
 
     # --------------------------------------------------------------- helpers ---
@@ -122,6 +129,39 @@ class CompanyWorkflow:
         log.error("ERRO | Empresa: %s | Cidade: %s | Etapa: %s | Problema: %s | Ação: %s",
                   self.cnpj, self.row.cidade, stage.title, problem, action)
         self.pm.screenshot_on_error(stage.value, self.settings.log_dir / "screenshots")
+
+    def _has_guided_artifacts(self) -> bool:
+        return bool(self._guided_saved_xml_paths or self._guided_saved_book_paths)
+
+    @staticmethod
+    def _looks_like_guided_book(filename: str) -> bool:
+        return bool(re.search(r"livro|fiscal|livro.?iss", filename, re.I))
+
+    def _report_guided_artifact_progress(self, dest: Path) -> bool:
+        """Reflect verified files captured during manual learning in the live checklist."""
+        validator = XmlValidator()
+        # Only count artifacts verified during this run; older files for a different
+        # competence must not make the current checklist look complete.
+        xml_files = [
+            p for p in self._guided_saved_xml_paths
+            if p.is_file() and validator.validate_file(p).valid
+        ]
+        book_files: list[Path] = []
+        for p in self._guided_saved_book_paths:
+            try:
+                validate_deliverable(p, ("pdf", "xls", "xlsx", "csv", "zip"))
+                book_files.append(p)
+            except (InvalidFileError, OSError):
+                continue
+        if xml_files:
+            self.reporter.stage(Stage.XML, StepStatus.OK, f"{len(xml_files)} XML válido(s) na pasta")
+        if book_files:
+            self.reporter.stage(Stage.LIVRO, StepStatus.OK, "Livro Fiscal salvo e verificado")
+        complete = bool(xml_files and book_files)
+        if complete:
+            self.reporter.stage(Stage.ORGANIZACAO, StepStatus.OK,
+                                "XML e Livro Fiscal verificados na pasta da empresa")
+        return complete
 
     def _record_guided_download_failure(self, filename: str, dest: Path, reason: str,
                                         exc: BaseException | None = None) -> None:
@@ -186,6 +226,30 @@ class CompanyWorkflow:
             if not source.is_file() or source.stat().st_size <= 0:
                 raise OSError("O evento de download terminou sem produzir um arquivo não vazio.")
             kind = detect_kind(read_head(source))
+            suffix = Path(name).suffix.lower()
+            book_named = self._looks_like_guided_book(name)
+            if book_named and suffix in {".pdf", ".xls", ".xlsx", ".csv", ".zip"}:
+                extension = validate_deliverable(source, ("pdf", "xls", "xlsx", "csv", "zip"))
+                target = dest / name
+                if target.exists() and target.read_bytes() != source.read_bytes():
+                    target = dest / f"{Path(name).stem}_{uuid.uuid4().hex[:8]}{Path(name).suffix}"
+                move_atomic(source, target)
+                validate_deliverable(target, ("pdf", "xls", "xlsx", "csv", "zip"))
+                self._guided_saved_book_paths.append(target)
+                self._guided_book_saved += 1
+                self.reporter.stage(Stage.LIVRO, StepStatus.OK, f"Salvo: {target.name}")
+                self._log(Stage.LIVRO, "OK", "Livro Fiscal salvo no aprendizado guiado", file=str(target))
+                log.info("Livro Fiscal guiado salvo e verificado | destino=%s | bytes=%d | formato=%s",
+                         target, target.stat().st_size, extension,
+                         extra={**extra, "event": "guided_fiscal_book_saved",
+                                "status": "saved", "bytes_written": target.stat().st_size,
+                                "format": extension})
+                complete = self._report_guided_artifact_progress(dest)
+                if complete and self.control is not None:
+                    mark_progress = getattr(self.control, "mark_guided_progress", None)
+                    if callable(mark_progress):
+                        mark_progress()
+                return
             if kind == "zip":
                 candidates = self.dm.extract_zip(source)
             elif kind == "xml":
@@ -219,6 +283,14 @@ class CompanyWorkflow:
                         log.info("Download guiado já existe e foi verificado | destino=%s | bytes=%d",
                                  target, target.stat().st_size,
                                  extra={**extra, "status": "duplicate_validated"})
+                        if target not in self._guided_saved_xml_paths:
+                            self._guided_saved_xml_paths.append(target)
+                        self.reporter.stage(Stage.XML, StepStatus.OK, f"Já salvo: {target.name}")
+                        complete = self._report_guided_artifact_progress(dest)
+                        if complete and self.control is not None:
+                            mark_progress = getattr(self.control, "mark_guided_progress", None)
+                            if callable(mark_progress):
+                                mark_progress()
                         continue
                     target = dest / (Path(base).stem + "_" + info.sha256[:8] + ".xml")
                 move_atomic(candidate, target)
@@ -229,6 +301,15 @@ class CompanyWorkflow:
                     raise InvalidFileError(f"O XML gravado difere do conteúdo validado: {target.name}.")
                 saved += 1
                 self._guided_download_saved += 1
+                if target not in self._guided_saved_xml_paths:
+                    self._guided_saved_xml_paths.append(target)
+                self.reporter.stage(Stage.XML, StepStatus.OK, f"Salvo: {target.name}")
+                self._log(Stage.XML, "OK", "XML salvo no aprendizado guiado", file=str(target))
+                complete = self._report_guided_artifact_progress(dest)
+                if complete and self.control is not None:
+                    mark_progress = getattr(self.control, "mark_guided_progress", None)
+                    if callable(mark_progress):
+                        mark_progress()
                 log.info("Download guiado salvo e verificado | destino=%s | bytes=%d | sha256=%s",
                          target, target.stat().st_size, info.sha256,
                          extra={**extra, "status": "saved", "sha256": info.sha256,
@@ -294,7 +375,8 @@ class CompanyWorkflow:
             except PlaywrightError:
                 log.debug("Página já encerrada durante limpeza do listener de download.")
         log.info("Captura de downloads guiados encerrada | eventos=%d | arquivos_salvos=%d | falhas=%d",
-                 self._guided_download_events, self._guided_download_saved, self._guided_download_failures,
+                 self._guided_download_events, self._guided_download_saved + self._guided_book_saved,
+                 self._guided_download_failures,
                  extra={"event": "guided_download_capture_stopped", "download_events": self._guided_download_events,
                         "files_saved": self._guided_download_saved, "failures": self._guided_download_failures})
         self._guided_download_context = None
@@ -431,6 +513,16 @@ class CompanyWorkflow:
             res.retry_company = infra
             return res
 
+        # Um download fiscal manual validado pode ter concluído etapas enquanto o
+        # operador estava no CAPTCHA. Não refaça essas etapas nem deixe o checklist
+        # em PENDENTE só porque a captura ocorreu fora do fluxo automático.
+        if self._guided_saved_xml_paths:
+            need_xml = False
+        if self._guided_saved_book_paths:
+            need_livro = False
+        xml_state = "skip" if not need_xml else "ok"
+        livro_state = "skip" if not need_livro else "ok"
+
         # --------------------------------------------------------- XML ---
         if need_xml:
             try:
@@ -448,7 +540,15 @@ class CompanyWorkflow:
                 xml_state = "fail"
                 problems.append(f"{stage.title}: {friendly_error(exc)}")
         else:
-            out.xml = XmlStats()
+            if self._guided_saved_xml_paths:
+                out.xml = XmlStats(found=len(self._guided_saved_xml_paths),
+                                   downloaded=len(self._guided_saved_xml_paths),
+                                   files=list(self._guided_saved_xml_paths))
+                self._set(Stage.XML, StepStatus.OK,
+                          f"{len(self._guided_saved_xml_paths)} XML(s) no aprendizado guiado")
+            else:
+                out.xml = XmlStats()
+                self._set(Stage.XML, StepStatus.PULADO, "Já concluído")
 
         # ---------------------------------------------------- Livro Fiscal ---
         if need_livro:
@@ -478,7 +578,12 @@ class CompanyWorkflow:
                 problems.append(f"Livro Fiscal: {friendly_error(exc)}")
         else:
             out.livro_ok = True
-            self._set(Stage.LIVRO, StepStatus.PULADO, "Já concluído")
+            if self._guided_saved_book_paths:
+                self._set(Stage.LIVRO, StepStatus.OK, "Baixado no aprendizado guiado")
+                self._log(Stage.LIVRO, "OK", "Livro Fiscal salvo no aprendizado guiado",
+                          str(self._guided_saved_book_paths[-1]))
+            else:
+                self._set(Stage.LIVRO, StepStatus.PULADO, "Já concluído")
 
         # ------------------------------------------------------ organização ---
         try:
