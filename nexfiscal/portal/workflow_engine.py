@@ -10,8 +10,10 @@ Regras de falha:
 from __future__ import annotations
 
 import logging
+import shutil
 import time
 import uuid
+import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -28,8 +30,9 @@ from ..database.models import CompanyRow, CompanyRun, Portal, RunStatus, Stage, 
 from ..database.repositories import ExecutionRepository
 from ..dates import Period
 from ..events import CompanyReporter, RunControl
-from ..exceptions import (CancelledError, ConfigurationError, NetworkError, NexFiscalError,
-                          SessionExpiredError, StageUnavailableError, TemporaryError)
+from ..exceptions import (CancelledError, ConfigurationError, DownloadError, InvalidFileError,
+                          NetworkError, NexFiscalError, SessionExpiredError,
+                          StageUnavailableError, TemporaryError)
 from ..fiscal_book.downloader import LivroFileStore
 from ..fiscal_book.fiscal_book import FiscalBookHandler
 from ..logs.logger import SECRETS
@@ -97,7 +100,11 @@ class CompanyWorkflow:
         self.cnpj = row.display
         self._guided_download_dest: Path | None = None
         self._guided_download_context = None
-        self._guided_download_pages: set[int] = set()
+        self._guided_download_pages: dict[int, Page] = {}
+        self._guided_attach_page = None
+        self._guided_download_events = 0
+        self._guided_download_saved = 0
+        self._guided_download_failures = 0
 
     # --------------------------------------------------------------- helpers ---
     def _set(self, stage: Stage, status: StepStatus, msg: str = "") -> None:
@@ -116,93 +123,180 @@ class CompanyWorkflow:
                   self.cnpj, self.row.cidade, stage.title, problem, action)
         self.pm.screenshot_on_error(stage.value, self.settings.log_dir / "screenshots")
 
+    def _record_guided_download_failure(self, filename: str, dest: Path, reason: str,
+                                        exc: BaseException | None = None) -> None:
+        """Make a failed manual download visible instead of silently continuing."""
+        self._guided_download_failures += 1
+        detail = SECRETS.redact(reason)
+        extra = {"event": "guided_xml_download_failed", "company": self.cnpj,
+                 "city": self.row.cidade, "download_name": filename,
+                 "destination": str(dest), "failure_count": self._guided_download_failures}
+        if exc is not None:
+            log.error("Download guiado falhou | arquivo=%s | destino=%s | motivo=%s",
+                      filename, dest, detail, exc_info=(type(exc), exc, exc.__traceback__), extra=extra)
+        else:
+            log.error("Download guiado falhou | arquivo=%s | destino=%s | motivo=%s",
+                      filename, dest, detail, extra=extra)
+        self._log(Stage.XML, "ERRO", f"Download guiado falhou: {detail}", file=str(dest / filename), err=detail)
+        try:
+            self.reporter.assist(
+                f"[FALHA NO DOWNLOAD XML] {filename}: {detail} Destino esperado: {dest}. "
+                "O download não foi confirmado; verifique o log e tente novamente."
+            )
+        except (RuntimeError, AttributeError):
+            log.exception("Não foi possível informar a falha do download guiado à interface.", extra=extra)
+
     def _capture_guided_download(self, download) -> None:  # type: ignore[no-untyped-def]
-        """Persist manual downloads initiated during guided learning."""
+        """Persist and verify manual downloads while the guided workflow is active."""
         dest = self._guided_download_dest
         if dest is None:
+            log.warning("Evento de download recebido sem destino guiado ativo; evento descartado.")
             return
+        self._guided_download_events += 1
         tmp = self.settings.tmp_dir / ("guided-" + uuid.uuid4().hex[:12])
+        name = sanitize_name(download.suggested_filename or "download.xml") or "download.xml"
+        extra = {"event": "guided_xml_download_received", "company": self.cnpj,
+                 "city": self.row.cidade, "download_name": name, "destination": str(dest),
+                 "event_number": self._guided_download_events}
         try:
             dest.mkdir(parents=True, exist_ok=True)
             tmp.mkdir(parents=True, exist_ok=True)
-            name = sanitize_name(download.suggested_filename or "download.xml") or "download.xml"
             source = tmp / name
-            download.save_as(str(source))
-            failure = download.failure()
-            if failure:
-                raise OSError(failure)
-            candidates = self.dm.extract_zip(source) if detect_kind(read_head(source)) == "zip" else [source]
+            last_error: BaseException | None = None
+            for attempt in range(1, 4):
+                try:
+                    download.save_as(str(source))
+                    failure = download.failure()
+                    if failure:
+                        raise DownloadError(f"Chromium informou falha no download: {failure}")
+                    last_error = None
+                    break
+                except (PlaywrightError, OSError) as exc:
+                    last_error = exc
+                    source.unlink(missing_ok=True)
+                    if attempt == 3:
+                        raise
+                    delay = 0.15 * (2 ** (attempt - 1))
+                    log.warning("Falha transitória ao copiar download guiado; tentativa %d/3 | arquivo=%s | erro=%s",
+                                attempt, name, SECRETS.redact(str(exc)),
+                                extra={**extra, "attempt": attempt, "delay_seconds": delay})
+                    time.sleep(delay)
+            if last_error is not None:
+                raise last_error
+            if not source.is_file() or source.stat().st_size <= 0:
+                raise OSError("O evento de download terminou sem produzir um arquivo não vazio.")
+            kind = detect_kind(read_head(source))
+            if kind == "zip":
+                candidates = self.dm.extract_zip(source)
+            elif kind == "xml":
+                candidates = [source]
+            else:
+                raise InvalidFileError(f"O arquivo recebido não é XML nem ZIP com XML (tipo detectado: {kind}).")
             validator = XmlValidator()
             saved = 0
-            for candidate in candidates:
-                if candidate.suffix.lower() != ".xml":
-                    continue
+            invalid: list[str] = []
+            xml_candidates = [p for p in candidates if p.suffix.lower() == ".xml"]
+            if not xml_candidates:
+                raise InvalidFileError("O arquivo ZIP/baixado não contém membros com extensão .xml.")
+            for candidate in xml_candidates:
                 info = validator.validate_file(candidate)
                 if not info.valid:
-                    log.warning("Download guiado recebido, mas XML não validado: %s (%s)", name, info.reason)
+                    invalid.append(f"{candidate.name}: {info.reason}")
+                    log.warning("XML de download guiado recusado pela validação | arquivo=%s | motivo=%s",
+                                candidate.name, info.reason, extra=extra)
                     continue
                 if info.is_consulta_sem_notas:
                     base = "Resposta_Consulta_NFSe_Sem_Notas_" + info.sha256[:12] + ".xml"
                 else:
-                    base = ("NFSe_" + sanitize_name(info.numero) + ".xml") if info.numero else name
+                    base = candidate.name if candidate != source else name
+                    base = sanitize_name(base) or ("NFSe_" + info.sha256[:12] + ".xml")
+                    if not base.lower().endswith(".xml"):
+                        base += ".xml"
                 target = dest / base
                 if target.exists():
                     if target.stat().st_size == candidate.stat().st_size and target.read_bytes() == candidate.read_bytes():
                         candidate.unlink(missing_ok=True)
                         saved += 1
-                        log.info("Download guiado já existe no destino: %s", target)
+                        log.info("Download guiado já existe e foi verificado | destino=%s | bytes=%d",
+                                 target, target.stat().st_size,
+                                 extra={**extra, "status": "duplicate_validated"})
                         continue
                     target = dest / (Path(base).stem + "_" + info.sha256[:8] + ".xml")
                 move_atomic(candidate, target)
-                if not target.is_file() or target.stat().st_size == 0:
-                    raise OSError("arquivo não confirmado no destino: " + str(target))
+                if not target.is_file() or target.stat().st_size <= 0:
+                    raise OSError("O arquivo de destino não passou na verificação pós-gravação.")
+                saved_info = validator.validate_file(target)
+                if not saved_info.valid or saved_info.sha256 != info.sha256:
+                    raise InvalidFileError(f"O XML gravado difere do conteúdo validado: {target.name}.")
                 saved += 1
-                log.info("Download guiado capturado e salvo: origem=Chromium | destino=%s | bytes=%d", target, target.stat().st_size)
+                self._guided_download_saved += 1
+                log.info("Download guiado salvo e verificado | destino=%s | bytes=%d | sha256=%s",
+                         target, target.stat().st_size, info.sha256,
+                         extra={**extra, "status": "saved", "sha256": info.sha256,
+                                "bytes_written": target.stat().st_size})
+                self._log(Stage.XML, "OK", "Download guiado salvo e verificado", file=str(target))
             if saved == 0:
-                log.warning("Download guiado recebido, mas nenhum XML válido foi salvo. Arquivo=%s", name)
-        except Exception:
-            log.exception("Falha ao salvar download manual do aprendizado guiado no destino da empresa: %s", dest)
+                reason = "Nenhum XML válido foi salvo. " + ("; ".join(invalid) if invalid else "O arquivo não continha XML válido.")
+                self._record_guided_download_failure(name, dest, reason)
+            elif invalid:
+                self._record_guided_download_failure(name, dest,
+                    "Download parcial: alguns XMLs foram rejeitados: " + "; ".join(invalid))
+        except (PlaywrightError, OSError, zipfile.BadZipFile, InvalidFileError, NexFiscalError) as exc:
+            self._record_guided_download_failure(name, dest, str(exc), exc)
+        except Exception as exc:
+            # Unexpected programming errors are intentionally visible with a traceback.
+            self._record_guided_download_failure(name, dest,
+                f"Erro inesperado ({type(exc).__name__}): {exc}", exc)
         finally:
-            import shutil
             shutil.rmtree(tmp, ignore_errors=True)
 
     def _start_guided_download_capture(self, dest: Path) -> None:
-        """Observe operator downloads only during guided login/learning."""
+        """Observe operator downloads on every page/popup during guided learning."""
         if not self.settings.guided_learning:
             return
         self._guided_download_dest = dest
         context = self.page.context
         self._guided_download_context = context
-        self._guided_download_pages = set()
+        self._guided_download_pages = {}
+
         def attach(page: Page) -> None:
             key = id(page)
             if key in self._guided_download_pages:
                 return
-            self._guided_download_pages.add(key)
+            self._guided_download_pages[key] = page
             page.on("download", self._capture_guided_download)
+
         for page in context.pages:
             attach(page)
         context.on("page", attach)
         self._guided_attach_page = attach
-        log.info("Captura de downloads manuais ativada. Destino XML: %s", dest)
+        log.info("Captura de downloads guiados ativada | destino=%s | paginas_monitoradas=%d",
+                 dest, len(self._guided_download_pages),
+                 extra={"event": "guided_download_capture_started", "destination": str(dest),
+                        "guided_learning": True})
 
     def _stop_guided_download_capture(self) -> None:
         context = self._guided_download_context
         if context is None:
             return
         try:
-            context.remove_listener("page", self._guided_attach_page)
-        except Exception:
-            pass
-        for page in list(context.pages):
+            if self._guided_attach_page is not None:
+                context.remove_listener("page", self._guided_attach_page)
+        except PlaywrightError:
+            log.warning("Não foi possível remover o listener de novas páginas do download guiado.", exc_info=True)
+        for page in self._guided_download_pages.values():
             try:
                 page.remove_listener("download", self._capture_guided_download)
-            except Exception:
-                pass
+            except PlaywrightError:
+                log.debug("Página já encerrada durante limpeza do listener de download.")
+        log.info("Captura de downloads guiados encerrada | eventos=%d | arquivos_salvos=%d | falhas=%d",
+                 self._guided_download_events, self._guided_download_saved, self._guided_download_failures,
+                 extra={"event": "guided_download_capture_stopped", "download_events": self._guided_download_events,
+                        "files_saved": self._guided_download_saved, "failures": self._guided_download_failures})
         self._guided_download_context = None
         self._guided_download_dest = None
-        self._guided_download_pages = set()
-        log.info("Captura de downloads manuais desativada.")
+        self._guided_download_pages = {}
+        self._guided_attach_page = None
 
     def _goto_home(self) -> None:
         if self.home_url and self.page.url != self.home_url:
