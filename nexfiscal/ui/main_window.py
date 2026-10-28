@@ -23,13 +23,11 @@ from ..reports.export import export
 from ..spreadsheet.validator import ValidationReport, validate_spreadsheet
 from .dialogs import PortalsDialog, SettingsDialog, TextDialog
 from .worker import BatchWorker
+from .start_policy import force_reprocess_for_start
 
 SYMBOL = {"PENDENTE": "○", "EM_ANDAMENTO": "●", "OK": "✓", "PULADO": "–", "PENDENCIA": "!", "ERRO": "✗"}
 
 
-def force_reprocess_for_start(force_checked: bool, from_db: bool) -> bool:
-    """Retomada/tentativa não deve reprocessar concluídas por causa da caixa de seleção."""
-    return bool(force_checked and not from_db)
 SHOWN_STAGES = [Stage.LOGIN, Stage.CAPTCHA, Stage.XML, Stage.LIVRO, Stage.ORGANIZACAO]
 
 
