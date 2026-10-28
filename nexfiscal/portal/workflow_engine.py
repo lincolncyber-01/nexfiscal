@@ -26,6 +26,7 @@ from playwright.sync_api import Page
 from ..authentication.login import LoginHandler
 from ..browser.download_manager import DownloadManager
 from ..browser.page_manager import PageManager
+from ..config import portal_config as pc
 from ..config.settings import Settings
 from ..database.models import CompanyRow, CompanyRun, Portal, RunStatus, Stage, StepStatus
 from ..database.repositories import ExecutionRepository
@@ -112,6 +113,7 @@ class CompanyWorkflow:
         self._guided_saved_xml_paths: list[Path] = []
         self._guided_saved_book_paths: list[Path] = []
         self._guided_download_failures = 0
+        self._guided_baseline_files: dict[str, tuple[int, int]] = {}
 
     # --------------------------------------------------------------- helpers ---
     def _set(self, stage: Stage, status: StepStatus, msg: str = "") -> None:
@@ -131,17 +133,74 @@ class CompanyWorkflow:
         self.pm.screenshot_on_error(stage.value, self.settings.log_dir / "screenshots")
 
     def _has_guided_artifacts(self) -> bool:
+        # Any verified fiscal file means the operator reached a page beyond login.
+        # The manual guided stage below still waits for both required deliverables.
         return bool(self._guided_saved_xml_paths or self._guided_saved_book_paths)
+
+    def _should_use_manual_guided_flow(self) -> bool:
+        """Keep a first/unlearned fiscal route manual instead of searching/clicking automatically."""
+        if not self.settings.guided_learning:
+            return False
+        if getattr(self.login_handler, "_manual_guided_login", False):
+            return True
+        return not (
+            self.profile.has(pc.NFSE_XML.stage.value, pc.NFSE_XML.key)
+            and self.profile.has(pc.LIVRO_DOWNLOAD.stage.value, pc.LIVRO_DOWNLOAD.key)
+        )
 
     @staticmethod
     def _looks_like_guided_book(filename: str) -> bool:
         return bool(re.search(r"livro|fiscal|livro.?iss", filename, re.I))
 
+    @staticmethod
+    def _zip_contains_xml(path: Path) -> bool:
+        try:
+            with zipfile.ZipFile(path) as archive:
+                return any(
+                    not member.is_dir() and member.filename.lower().endswith(".xml")
+                    for member in archive.infolist()
+                )
+        except (OSError, zipfile.BadZipFile):
+            return False
+
+    def _reconcile_guided_folder(self, dest: Path) -> None:
+        """Find newly written artifacts even if the browser download event was missed."""
+        if not dest.is_dir():
+            return
+        validator = XmlValidator()
+        for path in dest.iterdir():
+            if not path.is_file():
+                continue
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            signature = (stat.st_size, stat.st_mtime_ns)
+            if self._guided_baseline_files.get(path.name) == signature:
+                continue
+            suffix = path.suffix.lower()
+            if suffix == ".xml":
+                if validator.validate_file(path).valid and path not in self._guided_saved_xml_paths:
+                    self._guided_saved_xml_paths.append(path)
+                continue
+            if path in self._guided_saved_book_paths:
+                continue
+            try:
+                ext = validate_deliverable(path, ("pdf", "xls", "xlsx", "csv", "zip"))
+            except (InvalidFileError, OSError):
+                continue
+            # XLSX files are ZIP containers too. A plain ZIP containing XML members
+            # is an XML bundle, not a Livro Fiscal, unless the portal explicitly labels it.
+            xml_bundle = ext == "zip" and self._zip_contains_xml(path)
+            looks_like_book = self._looks_like_guided_book(path.name)
+            after_xml = bool(self._guided_saved_xml_paths)
+            if looks_like_book or (after_xml and not xml_bundle):
+                self._guided_saved_book_paths.append(path)
+
     def _report_guided_artifact_progress(self, dest: Path) -> bool:
         """Reflect verified files captured during manual learning in the live checklist."""
+        self._reconcile_guided_folder(dest)
         validator = XmlValidator()
-        # Only count artifacts verified during this run; older files for a different
-        # competence must not make the current checklist look complete.
         xml_files = [
             p for p in self._guided_saved_xml_paths
             if p.is_file() and validator.validate_file(p).valid
@@ -162,6 +221,84 @@ class CompanyWorkflow:
             self.reporter.stage(Stage.ORGANIZACAO, StepStatus.OK,
                                 "XML e Livro Fiscal verificados na pasta da empresa")
         return complete
+
+    def _write_guided_manifest(self, paths, out: CompanyResult, problems: list[str]) -> None:  # type: ignore[no-untyped-def]
+        OutputLayout.write_manifest(paths, {
+            "empresa": self.cnpj, "razao_social": self.row.razao_social,
+            "cidade": self.row.cidade, "competencia": self.period.competence.label,
+            "periodo": f"{self.period.start_br} a {self.period.end_br}",
+            "xml": {"encontrados": out.xml.found, "baixados": out.xml.downloaded,
+                    "ja_existentes": out.xml.existing, "falhas": out.xml.failed},
+            "livro_fiscal": out.livro_ok, "pendencias": problems,
+        })
+
+    def _finish_manual_guided_flow(self, paths, out: CompanyResult) -> CompanyResult:  # type: ignore[no-untyped-def]
+        """Wait for operator-led downloads, then finish the company without autonomous fiscal clicks."""
+        dest = paths.xml_dir
+        timeout = max(self.settings.captcha_timeout_seconds, self.settings.assist_timeout_seconds)
+        deadline = time.monotonic() + timeout
+        self._report_guided_artifact_progress(dest)
+        complete = self._report_guided_artifact_progress(dest)
+        if not self._guided_saved_book_paths:
+            self._set(Stage.LIVRO, StepStatus.EM_ANDAMENTO, "Aguardando download manual do Livro Fiscal")
+        while not complete and time.monotonic() < deadline:
+            self.pm.checkpoint()
+            try:
+                # Playwright dispatches download events while this wait yields to the browser.
+                self.page.wait_for_timeout(250)
+            except PlaywrightError:
+                log.warning("Página do portal fechada antes de concluir o aprendizado guiado.")
+                break
+            complete = self._report_guided_artifact_progress(dest)
+
+        xml_files = [
+            p for p in self._guided_saved_xml_paths
+            if p.is_file() and XmlValidator().validate_file(p).valid
+        ]
+        book_files: list[Path] = []
+        for path in self._guided_saved_book_paths:
+            try:
+                validate_deliverable(path, ("pdf", "xls", "xlsx", "csv", "zip"))
+                book_files.append(path)
+            except (InvalidFileError, OSError):
+                continue
+        out.xml = XmlStats(found=len(xml_files), downloaded=len(xml_files), files=list(xml_files))
+        out.livro_ok = bool(book_files)
+        problems: list[str] = []
+
+        if xml_files:
+            self._set(Stage.XML, StepStatus.OK, f"{len(xml_files)} XML válido(s) salvo(s)")
+            self._log(Stage.XML, "OK", "XML do aprendizado guiado confirmado", file=str(xml_files[-1]))
+        else:
+            self._set(Stage.XML, StepStatus.PENDENCIA, "Nenhum XML validado foi capturado nesta execução")
+            problems.append("XML não confirmado no destino configurado")
+        if book_files:
+            self._set(Stage.LIVRO, StepStatus.OK, "Livro Fiscal salvo e verificado")
+            self._log(Stage.LIVRO, "OK", "Livro Fiscal do aprendizado guiado confirmado",
+                      file=str(book_files[-1]))
+        else:
+            self._set(Stage.LIVRO, StepStatus.PENDENCIA,
+                      "Download não reconhecido; confira o nome/formato do arquivo")
+            problems.append("Livro Fiscal não confirmado no destino configurado")
+
+        if not problems:
+            self._set(Stage.ORGANIZACAO, StepStatus.OK, "Arquivos confirmados e manifesto salvo")
+        else:
+            self._set(Stage.ORGANIZACAO, StepStatus.PENDENCIA, "Finalização parcial; verifique os arquivos")
+        try:
+            self._write_guided_manifest(paths, out, problems)
+        except Exception as exc:
+            log.exception("Falha ao gravar manifesto do aprendizado guiado.")
+            self._set(Stage.ORGANIZACAO, StepStatus.ERRO, friendly_error(exc))
+            problems.append(f"Manifesto: {friendly_error(exc)}")
+
+        if problems:
+            out.status = RunStatus.CONCLUIDO_COM_PENDENCIA if xml_files or book_files else RunStatus.ERRO
+            out.message = "; ".join(problems)
+        else:
+            out.status = RunStatus.CONCLUIDO
+            out.message = "Concluído"
+        return out
 
     def _record_guided_download_failure(self, filename: str, dest: Path, reason: str,
                                         exc: BaseException | None = None) -> None:
@@ -339,6 +476,15 @@ class CompanyWorkflow:
         """Observe operator downloads on every page/popup during guided learning."""
         if not self.settings.guided_learning:
             return
+        dest.mkdir(parents=True, exist_ok=True)
+        self._guided_baseline_files = {}
+        for existing in dest.iterdir():
+            try:
+                if existing.is_file():
+                    stat = existing.stat()
+                    self._guided_baseline_files[existing.name] = (stat.st_size, stat.st_mtime_ns)
+            except OSError:
+                continue
         self._guided_download_dest = dest
         context = self.page.context
         self._guided_download_context = context
