@@ -78,6 +78,9 @@ class PageStub(EventEmitterStub):
     def wait_for_timeout(self, _ms: int) -> None:
         return None
 
+    def go_back(self) -> None:
+        self.url = "https://portal.example/consulta"
+
 
 def workflow_stub(tmp_path: Path) -> CompanyWorkflow:
     workflow = CompanyWorkflow.__new__(CompanyWorkflow)
