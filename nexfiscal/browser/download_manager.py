@@ -63,9 +63,10 @@ class DownloadManager:
                 trigger()
             except (PlaywrightError, NexFiscalError) as exc:
                 trigger_error = exc
-                if not downloads and not popups:
+                navigation_started = page.url != url_before
+                if not downloads and not popups and not navigation_started:
                     raise DownloadError(f"O clique não concluiu a ação de download: {exc}") from exc
-                log.warning("A ação de clique falhou depois que o portal já iniciou um download/aba; tentando capturar o arquivo observado.",
+                log.warning("A ação de clique falhou depois que o portal já iniciou uma exportação; examinando evento/aba/navegação observados.",
                             extra={"event": "download_trigger_error_after_event", "error_type": type(exc).__name__,
                                    "download_events": len(downloads), "popups": len(popups)})
             deadline = time.monotonic() + (timeout if timeout is not None else self.timeout)

@@ -78,6 +78,9 @@ class PageStub(EventEmitterStub):
     def wait_for_timeout(self, _ms: int) -> None:
         return None
 
+    def go_back(self) -> None:
+        self.url = "https://portal.example/consulta"
+
 
 def workflow_stub(tmp_path: Path) -> CompanyWorkflow:
     workflow = CompanyWorkflow.__new__(CompanyWorkflow)
@@ -298,3 +301,36 @@ def test_failed_new_fiscal_book_persistence_preserves_previous_file(tmp_path, mo
 
     assert old_file.read_bytes() == previous_bytes
     assert new_file.is_file()
+
+
+def test_download_capture_keeps_inline_navigation_when_click_raises(tmp_path):
+    page = PageStub()
+    manager = DownloadManager(tmp_path / "inline-nav", timeout_seconds=1)
+
+    class RequestStub:
+        @staticmethod
+        def get(url: str, timeout: int):
+            assert url == "https://portal.example/nota.xml"
+            assert timeout > 0
+
+            class Response:
+                ok = True
+                status = 200
+                headers = {'content-disposition': 'attachment; filename="nota.xml"'}
+
+                @staticmethod
+                def body() -> bytes:
+                    return VALID_XML
+
+            return Response()
+
+    page.context.request = RequestStub()
+
+    def trigger() -> None:
+        page.url = "https://portal.example/nota.xml"
+        raise PlaywrightError("frame was detached after navigation")
+
+    captured = manager.capture(page, trigger)
+
+    assert captured.suggested_name == "nota.xml"
+    assert captured.path.read_bytes() == VALID_XML
