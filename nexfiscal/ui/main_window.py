@@ -318,6 +318,13 @@ class MainWindow(QMainWindow):
             if key:
                 self.counts[key] += 1
             self._update_counts(ev.current)
+            final_step = {
+                "CONCLUIDO": "Empresa concluída",
+                "CONCLUIDO_COM_PENDENCIA": "Finalizado com pendência",
+                "ERRO": "Empresa finalizada com erro",
+            }.get(ev.status)
+            if final_step:
+                self.d_step.setText(final_step)
 
     def confirm_captcha_resolved(self) -> None:
         """Allow the operator to acknowledge a CAPTCHA they solved manually."""
