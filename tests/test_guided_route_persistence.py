@@ -52,3 +52,31 @@ def test_guided_mode_keeps_unlearned_xml_and_book_routes_manual():
     ]
 
     assert not workflow._should_use_manual_guided_flow()
+
+
+def test_explicit_save_forces_persistence_of_clean_portal_profile():
+    from contextlib import nullcontext
+    from unittest.mock import Mock
+    from types import SimpleNamespace
+    from nexfiscal.memory.portal_memory_manager import PortalMemoryManager
+
+    manager = PortalMemoryManager.__new__(PortalMemoryManager)
+    manager.db = SimpleNamespace(transaction=lambda: nullcontext())
+    manager.repo = SimpleNamespace(
+        save_selector=Mock(), save_flow=Mock(), add_change=Mock(), add_note=Mock()
+    )
+    manager.portals = SimpleNamespace(update_recognition=Mock())
+    profile = PortalProfile(
+        portal_id=9,
+        url="https://portal.example",
+        flows={"guided_actions_v1:portal.example/consulta": ['{"order": 1}']},
+        dirty=False,
+    )
+
+    manager.save_profile(profile, force=True)
+
+    manager.repo.save_flow.assert_called_once_with(
+        9, "guided_actions_v1:portal.example/consulta", ['{"order": 1}']
+    )
+    manager.portals.update_recognition.assert_called_once()
+    assert not profile.dirty
