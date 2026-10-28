@@ -87,7 +87,13 @@ class BatchRunner:
                         run = self.execs.get_or_create(comp, r)
                         run.status, run.message = RunStatus.ERRO, "Portal não cadastrado para a cidade."
                         self.execs.update(run)
+                        self.companies.set_status(r.usuario_key, r.cidade_norm, run.status)
                         done += 1
+                        self._emit(
+                            EventKind.COMPANY_END, city=r.cidade, company=r.display,
+                            competence=comp, status=run.status.value, message=run.message,
+                            current=done, total=total,
+                        )
                     log.error("Portal não cadastrado para %s: empresas marcadas com erro.", city)
                     continue
                 log.info("Carregando portal de %s.", city)
@@ -102,6 +108,12 @@ class BatchRunner:
                         run = self.execs.get_or_create(comp, row)
                         if run.status is RunStatus.CONCLUIDO and not force:
                             log.info("Empresa %s já concluída — pulada.", row.display)
+                            self._emit(
+                                EventKind.COMPANY_END, city=row.cidade, company=row.display,
+                                competence=comp, status=run.status.value,
+                                message="Empresa já concluída nesta competência — ignorada.",
+                                current=done, total=total,
+                            )
                             continue
                         if force:  # reprocessar do zero: esquece etapas e contadores anteriores
                             run.steps, run.livro_ok = {}, False

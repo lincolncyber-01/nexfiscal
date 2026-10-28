@@ -23,8 +23,11 @@ from ..reports.export import export
 from ..spreadsheet.validator import ValidationReport, validate_spreadsheet
 from .dialogs import PortalsDialog, SettingsDialog, TextDialog
 from .worker import BatchWorker
+from .start_policy import force_reprocess_for_start
 
 SYMBOL = {"PENDENTE": "○", "EM_ANDAMENTO": "●", "OK": "✓", "PULADO": "–", "PENDENCIA": "!", "ERRO": "✗"}
+
+
 SHOWN_STAGES = [Stage.LOGIN, Stage.CAPTCHA, Stage.XML, Stage.LIVRO, Stage.ORGANIZACAO]
 
 
@@ -169,7 +172,8 @@ class MainWindow(QMainWindow):
         total = len([r for r in rows if r.cidade_norm in city_filter])
         self._prepare_dashboard(total, period)
         self.control = RunControl()
-        self.worker = BatchWorker(self.ctx, rows, period, city_filter, self.force.isChecked(), self.control)
+        self.worker = BatchWorker(self.ctx, rows, period, city_filter,
+                                  force_reprocess_for_start(self.force.isChecked(), from_db), self.control)
         self.worker.event.connect(self.on_event)
         self.worker.log_line.connect(self.on_log)
         self.worker.finished_ok.connect(self.on_finished)
@@ -316,6 +320,11 @@ class MainWindow(QMainWindow):
             self.xml_bar.setMaximum(max(ev.total, 1))
             self.xml_bar.setValue(ev.current)
         elif ev.kind is EventKind.COMPANY_END:
+            # End events also represent skipped/completely unconfigured companies, which
+            # do not emit COMPANY_START. Keep the dashboard and counts in sync for them.
+            self.d_city.setText(ev.city.upper())
+            self.d_company.setText(ev.company)
+            self.d_progress.setText(f"Empresa: {ev.current}/{ev.total}")
             key = {"CONCLUIDO": "ok", "CONCLUIDO_COM_PENDENCIA": "pend", "ERRO": "err"}.get(ev.status)
             if key:
                 self.counts[key] += 1
@@ -326,7 +335,9 @@ class MainWindow(QMainWindow):
                 "ERRO": "Empresa finalizada com erro",
             }.get(ev.status)
             if final_step:
-                self.d_step.setText(final_step)
+                self.d_step.setText(
+                    ev.message if ev.message and ev.message != "Concluído" else final_step
+                )
 
     def confirm_captcha_resolved(self) -> None:
         """Allow the operator to acknowledge a CAPTCHA they solved manually."""

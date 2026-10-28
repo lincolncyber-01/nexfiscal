@@ -1,6 +1,7 @@
 """Regression coverage for resilient downloads and the post-CAPTCHA safety gate."""
 from __future__ import annotations
 
+import hashlib
 import io
 import zipfile
 from pathlib import Path
@@ -12,6 +13,8 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
 from nexfiscal.authentication.login import LoginHandler
 from nexfiscal.browser.download_manager import DownloadManager
+from nexfiscal.nfse.xml_downloader import XmlDownloader, XmlStats
+from nexfiscal.nfse.xml_validator import XmlValidator
 from nexfiscal.database.models import Stage, StepStatus
 from nexfiscal.events import RunControl
 from nexfiscal.exceptions import FilePermissionError, LoginError
@@ -442,3 +445,93 @@ def test_guided_reconciliation_recovers_existing_xml_and_opaque_named_book(tmp_p
     assert any(stage is Stage.ORGANIZACAO and status is StepStatus.OK
                for stage, status, _ in workflow.reporter.stages)
 
+
+
+def _xml_store_stub(policy="skip_valid"):
+    downloader = XmlDownloader.__new__(XmlDownloader)
+    downloader.settings = SimpleNamespace(existing_files=policy)
+    downloader.validator = XmlValidator()
+    return downloader
+
+
+def _write_xml(path: Path, payload: bytes) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(payload)
+    return path
+
+
+def test_automatic_xml_download_preserves_filename_and_keeps_conflicting_content(tmp_path):
+    downloader = _xml_store_stub()
+    dest = tmp_path / "LIVRAMENTO" / "Empresa"
+    dest.mkdir(parents=True)
+    first_payload = b"<Nfse><InfNfse><Numero>205241</Numero><Valor>10.00</Valor></InfNfse></Nfse>"
+    second_payload = b"<Nfse><InfNfse><Numero>205241</Numero><Valor>20.00</Valor></InfNfse></Nfse>"
+    stats = XmlStats()
+    index = {}
+
+    downloader._store(_write_xml(tmp_path / "tmp1" / "notas205241.xml", first_payload), dest, index, stats)
+    downloader._store(_write_xml(tmp_path / "tmp2" / "notas205241.xml", second_payload), dest, index, stats)
+    downloader._store(_write_xml(tmp_path / "tmp3" / "notas205241.xml", second_payload), dest, index, stats)
+
+    conflict = dest / f"notas205241_{hashlib.sha256(second_payload).hexdigest()[:8]}.xml"
+    assert (dest / "notas205241.xml").read_bytes() == first_payload
+    assert conflict.read_bytes() == second_payload
+    assert stats.found == 3
+    assert stats.downloaded == 2
+    assert stats.existing == 1
+
+
+def test_automatic_consulta_xml_without_notes_keeps_original_filename(tmp_path):
+    downloader = _xml_store_stub()
+    dest = tmp_path / "Empresa"
+    dest.mkdir()
+    payload = """
+    <ConsultarNfseServicoPrestadoResposta>
+      <ListaMensagemRetorno><MensagemRetorno>
+        <Mensagem>NOTAS FISCAIS NÃO LOCALIZADAS.</Mensagem>
+      </MensagemRetorno></ListaMensagemRetorno>
+    </ConsultarNfseServicoPrestadoResposta>
+    """.encode("utf-8")
+    stats = XmlStats()
+    source = _write_xml(tmp_path / "tmp" / "consulta_09_2026.xml", payload)
+
+    downloader._store(source, dest, {}, stats)
+
+    saved = dest / "consulta_09_2026.xml"
+    assert saved.read_bytes() == payload
+    assert stats.found == 1 and stats.downloaded == 1
+
+
+def test_xml_pagination_waits_for_result_table_to_change():
+    from unittest.mock import Mock
+
+    downloader = XmlDownloader.__new__(XmlDownloader)
+    first = SimpleNamespace(locators=[object()])
+    second = SimpleNamespace(locators=[object()])
+    next_button = SimpleNamespace(locator=Mock())
+    next_button.locator.evaluate.return_value = ""
+    downloader.engine = Mock()
+    downloader.engine.find.return_value = next_button
+    downloader.engine.find_all.side_effect = [first, second]
+    downloader.pm = SimpleNamespace(checkpoint=lambda: None, click=Mock())
+    downloader.page = SimpleNamespace(wait_for_timeout=lambda _ms: None)
+    downloader.settings = SimpleNamespace(timeout_seconds=3)
+    downloader._page_signature = Mock(side_effect=["old-signature", "new-signature"])
+
+    assert downloader._next_page("old-signature") is True
+    downloader.pm.click.assert_called_once_with(next_button, "próxima página")
+
+
+def test_zip_extraction_keeps_distinct_entries_with_same_basename(tmp_path):
+    archive = tmp_path / "bundle.zip"
+    first = b"<Nfse><InfNfse><Numero>111</Numero></InfNfse></Nfse>"
+    second = b"<Nfse><InfNfse><Numero>222</Numero></InfNfse></Nfse>"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("prestador_a/nota.xml", first)
+        zf.writestr("prestador_b/nota.xml", second)
+
+    extracted = DownloadManager(tmp_path / "tmp").extract_zip(archive)
+
+    assert len(extracted) == 2
+    assert {p.read_bytes() for p in extracted} == {first, second}
+    assert len({p.name for p in extracted}) == 2
