@@ -69,7 +69,10 @@ def move_atomic(src: Path, dst: Path) -> Path:
             return dst
         except OSError as exc:
             last_error = exc
-            part.unlink(missing_ok=True)
+            try:
+                part.unlink(missing_ok=True)
+            except OSError:
+                log.warning("Não foi possível remover temporário parcial após falha: %s", part, exc_info=True)
             retryable = isinstance(exc, PermissionError) or exc.errno in {
                 errno.EAGAIN, errno.EBUSY, errno.EINTR, getattr(errno, "ETXTBSY", -1)
             }
