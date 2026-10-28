@@ -120,7 +120,8 @@ class LoginHandler:
             if self.is_logged_in(login_url):  # o usuário já enviou o formulário
                 break
             if self._password_visible():
-                if self._manual_guided_login:
+                # CAPTCHA exige ação manual: nunca submeter o formulário automaticamente depois dele.
+                if self._manual_guided_login or self._captcha_seen:
                     self._request_manual_submit()
                 else:
                     self._submit()
@@ -193,6 +194,11 @@ class LoginHandler:
         self.pm.fill(pf, password, secret=True)
 
     def _submit(self) -> None:
+        # Defesa em profundidade contra futuras chamadas fora do fluxo protegido.
+        if self._captcha_seen:
+            raise LoginError(
+                "CAPTCHA resolvido. Por segurança, clique manualmente no botão de acesso no navegador."
+            )
         try:
             btn = self.engine.find(pc.LOGIN_BUTTON, timeout=6)
             self.pm.click(btn, "botão de login")
