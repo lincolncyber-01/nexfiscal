@@ -101,6 +101,7 @@ def workflow_stub(tmp_path: Path) -> CompanyWorkflow:
     workflow._guided_saved_xml_paths = []
     workflow._guided_saved_book_paths = []
     workflow._guided_download_failures = 0
+    workflow._guided_baseline_files = {}
     workflow.control = RunControl()
     workflow.dm = DownloadManager(workflow.settings.tmp_dir)
     workflow.reporter = ReporterStub()
@@ -372,14 +373,14 @@ def test_guided_download_checklist_advances_when_xml_and_book_are_saved(tmp_path
     workflow = workflow_stub(tmp_path)
     xml = DownloadStub("notas205241.xml", VALID_XML)
     book_payload = b"%PDF-1.4\\nLivro Fiscal de teste\\n%%EOF"
-    book = DownloadStub("Livro Fiscal.pdf", book_payload)
+    book = DownloadStub("relatorio.pdf", book_payload)
 
     workflow._capture_guided_download(xml)
     workflow._capture_guided_download(book)
 
     company_dir = workflow._guided_download_dest
     assert (company_dir / "notas205241.xml").read_bytes() == VALID_XML
-    assert (company_dir / "Livro Fiscal.pdf").read_bytes() == book_payload
+    assert (company_dir / "relatorio.pdf").read_bytes() == book_payload
     assert (Stage.XML, StepStatus.OK) == workflow.reporter.stages[0][:2]
     assert (Stage.LIVRO, StepStatus.OK) in [(stage, status) for stage, status, _ in workflow.reporter.stages]
     assert workflow.reporter.stages[-1][:2] == (Stage.ORGANIZACAO, StepStatus.OK)
