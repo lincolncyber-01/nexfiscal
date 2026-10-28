@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
 from nexfiscal.authentication.login import LoginHandler
 from nexfiscal.browser.download_manager import DownloadManager
@@ -246,3 +247,54 @@ def test_inline_file_download_retries_transient_playwright_network_error(tmp_pat
     assert page.context.request.calls == 2
     assert captured.suggested_name == "nota-inline.xml"
     assert captured.path.read_bytes() == VALID_XML
+
+
+
+def test_playwright_click_timeout_does_not_fall_back_to_second_javascript_click():
+    from nexfiscal.browser.page_manager import PageManager
+    from nexfiscal.exceptions import PortalTimeoutError
+
+    class TimedOutLocator:
+        evaluate_calls = 0
+
+        def click(self, timeout: int) -> None:
+            assert timeout > 0
+            raise PlaywrightTimeout("timed out after click dispatch")
+
+        def evaluate(self, _expression: str) -> None:
+            self.evaluate_calls += 1
+
+    manager = PageManager.__new__(PageManager)
+    manager.control = None
+    locator = TimedOutLocator()
+
+    with pytest.raises(PortalTimeoutError):
+        manager.click(locator, "download XML")
+
+    assert locator.evaluate_calls == 0
+
+
+def test_failed_new_fiscal_book_persistence_preserves_previous_file(tmp_path, monkeypatch):
+    from nexfiscal.browser.download_manager import CapturedFile
+    from nexfiscal.exceptions import FilePermissionError
+    from nexfiscal.fiscal_book.downloader import LivroFileStore
+
+    output = tmp_path / "output"
+    output.mkdir()
+    store = LivroFileStore(output, "12345678000199", SimpleNamespace(folder="2026-10"))
+    old_file = output / f"{store.stem}.pdf"
+    previous_bytes = b"%PDF-1.4\\nold valid file\\n%%EOF"
+    old_file.write_bytes(previous_bytes)
+    new_file = tmp_path / "new.pdf"
+    new_file.write_bytes(b"%PDF-1.4\\nnew valid file\\n%%EOF")
+
+    def fail_move(_src: Path, _dst: Path) -> Path:
+        raise FilePermissionError("temporary destination lock")
+
+    monkeypatch.setattr("nexfiscal.fiscal_book.downloader.move_atomic", fail_move)
+
+    with pytest.raises(FilePermissionError):
+        store.store(CapturedFile(new_file, "new.pdf"))
+
+    assert old_file.read_bytes() == previous_bytes
+    assert new_file.is_file()
