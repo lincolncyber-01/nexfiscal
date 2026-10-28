@@ -14,7 +14,7 @@ from urllib.parse import unquote, urlparse
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
-from ..exceptions import DownloadError
+from ..exceptions import DownloadError, NexFiscalError
 from ..storage.file_manager import detect_kind, read_head
 from ..utils import sanitize_name
 
@@ -61,7 +61,7 @@ class DownloadManager:
         try:
             try:
                 trigger()
-            except PlaywrightError as exc:
+            except (PlaywrightError, NexFiscalError) as exc:
                 trigger_error = exc
                 if not downloads and not popups:
                     raise DownloadError(f"O clique não concluiu a ação de download: {exc}") from exc
