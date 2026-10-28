@@ -140,11 +140,14 @@ class CompanyWorkflow:
     def _report_guided_artifact_progress(self, dest: Path) -> None:
         """Reflect verified files captured during manual learning in the live checklist."""
         validator = XmlValidator()
-        xml_files = [p for p in dest.glob("*.xml") if validator.validate_file(p).valid]
+        # Only count artifacts verified during this run; older files for a different
+        # competence must not make the current checklist look complete.
+        xml_files = [
+            p for p in self._guided_saved_xml_paths
+            if p.is_file() and validator.validate_file(p).valid
+        ]
         book_files: list[Path] = []
-        for p in dest.iterdir():
-            if p.suffix.lower() == ".xml" or not self._looks_like_guided_book(p.name):
-                continue
+        for p in self._guided_saved_book_paths:
             try:
                 validate_deliverable(p, ("pdf", "xls", "xlsx", "csv", "zip"))
                 book_files.append(p)
@@ -370,7 +373,8 @@ class CompanyWorkflow:
             except PlaywrightError:
                 log.debug("Página já encerrada durante limpeza do listener de download.")
         log.info("Captura de downloads guiados encerrada | eventos=%d | arquivos_salvos=%d | falhas=%d",
-                 self._guided_download_events, self._guided_download_saved, self._guided_download_failures,
+                 self._guided_download_events, self._guided_download_saved + self._guided_book_saved,
+                 self._guided_download_failures,
                  extra={"event": "guided_download_capture_stopped", "download_events": self._guided_download_events,
                         "files_saved": self._guided_download_saved, "failures": self._guided_download_failures})
         self._guided_download_context = None
