@@ -205,12 +205,9 @@ class CompanyWorkflow:
                     log.warning("XML de download guiado recusado pela validação | arquivo=%s | motivo=%s",
                                 candidate.name, info.reason, extra=extra)
                     continue
-                if info.is_resposta_consulta:
-                    # Preserve the portal's actual downloaded name for consultation
-                    # envelopes, including responses that state no invoices were found.
-                    base = candidate.name if candidate != source else name
-                else:
-                    base = candidate.name if candidate != source else name
+                # Preserve the portal's filename even when it is a consultation
+                # response without individually issued invoices.
+                base = candidate.name if candidate != source else name
                 base = sanitize_name(base) or ("NFSe_" + info.sha256[:12] + ".xml")
                 if not base.lower().endswith(".xml"):
                     base += ".xml"
