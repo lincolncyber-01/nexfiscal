@@ -1,6 +1,7 @@
 """Janela principal: seleção -> dashboard de execução -> relatório final."""
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 
