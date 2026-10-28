@@ -415,3 +415,30 @@ def test_manual_guided_flow_finishes_company_after_verified_xml_and_generic_pdf(
     assert workflow.steps[Stage.LIVRO.value] == StepStatus.OK.value
     assert workflow.steps[Stage.ORGANIZACAO.value] == StepStatus.OK.value
     assert result.message == "Concluído"
+
+def test_guided_reconciliation_recovers_existing_xml_and_opaque_named_book(tmp_path):
+    """Existing verified files must advance the checklist even without download events."""
+    workflow = workflow_stub(tmp_path)
+    dest = workflow._guided_download_dest
+    dest.mkdir(parents=True, exist_ok=True)
+    xml_path = dest / "notas205241.xml"
+    xml_path.write_bytes(VALID_XML)
+    book_path = dest / "relatorio_09-2026.pdf"
+    book_path.write_bytes(b"%PDF-1.4\n% livro fiscal de teste\n%%EOF")
+
+    # Simulate files already present at the moment guided capture starts. The old
+    # implementation skipped unchanged baseline signatures and left Livro Fiscal pending.
+    for path in (xml_path, book_path):
+        stat = path.stat()
+        workflow._guided_baseline_files[path.name] = (stat.st_size, stat.st_mtime_ns)
+
+    complete = workflow._report_guided_artifact_progress(dest)
+
+    assert complete is True
+    assert xml_path in workflow._guided_saved_xml_paths
+    assert book_path in workflow._guided_saved_book_paths
+    assert any(stage is Stage.LIVRO and status is StepStatus.OK
+               for stage, status, _ in workflow.reporter.stages)
+    assert any(stage is Stage.ORGANIZACAO and status is StepStatus.OK
+               for stage, status, _ in workflow.reporter.stages)
+
