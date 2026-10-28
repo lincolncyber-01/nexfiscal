@@ -143,7 +143,7 @@ class CompanyWorkflow:
                 f"[FALHA NO DOWNLOAD XML] {filename}: {detail} Destino esperado: {dest}. "
                 "O download não foi confirmado; verifique o log e tente novamente."
             )
-        except (RuntimeError, AttributeError):
+        except Exception:
             log.exception("Não foi possível informar a falha do download guiado à interface.", extra=extra)
 
     def _capture_guided_download(self, download) -> None:  # type: ignore[no-untyped-def]
@@ -248,7 +248,12 @@ class CompanyWorkflow:
             self._record_guided_download_failure(name, dest,
                 f"Erro inesperado ({type(exc).__name__}): {exc}", exc)
         finally:
-            shutil.rmtree(tmp, ignore_errors=True)
+            try:
+                shutil.rmtree(tmp)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                log.warning("Falha ao limpar diretório temporário do download guiado: %s", tmp, exc_info=True)
 
     def _start_guided_download_capture(self, dest: Path) -> None:
         """Observe operator downloads on every page/popup during guided learning."""
