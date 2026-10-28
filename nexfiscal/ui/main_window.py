@@ -308,7 +308,9 @@ class MainWindow(QMainWindow):
             self.banner.setStyleSheet("background:#0b57d0;color:white;padding:10px;font-weight:bold;")
             self.banner.setText(ev.message)
             self.banner.show()
-            self.d_step.setText("Aguardando seu clique no navegador")
+            # Late assistance notifications must not overwrite a later, confirmed stage.
+            if getattr(self, "_progress_rank", 0) < 2:
+                self.d_step.setText("Aguardando seu clique no navegador")
             QApplication.alert(self)
         elif ev.kind is EventKind.PROGRESS:
             self.xml_bar.setMaximum(max(ev.total, 1))
