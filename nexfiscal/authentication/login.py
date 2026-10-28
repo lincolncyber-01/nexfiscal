@@ -112,6 +112,11 @@ class LoginHandler:
                     "Navegue manualmente até a tela de login."
                 )
                 self._wait_for_password_field()
+        # The operator may have completed the login and downloaded a fiscal file while
+        # the guided wait was looking for the login form. Do not keep waiting for a
+        # password field that will never appear after navigation into the fiscal portal.
+        if self._finish_guided_login_if_artifacts():
+            return self.page.url
         self._remember_signature()
         if not (self.settings.guided_learning and not known_portal):
             self.recognizer.probe_login(self.engine, self.gate.detector)
@@ -171,13 +176,24 @@ class LoginHandler:
         return True
 
     def _wait_for_password_field(self) -> None:
-        """Aguarda o operador chegar manualmente à tela de login sem clicar/navegar por ele."""
+        """Aguarda login manual, mas libera o fluxo se um download fiscal válido já foi capturado."""
         deadline = time.monotonic() + self.settings.assist_timeout_seconds
         while time.monotonic() < deadline:
             if self.control:
                 self.control.checkpoint()
             if self._password_visible():
                 return
+            guided_progress = getattr(self, "guided_progress", None)
+            if self._manual_guided_login and callable(guided_progress):
+                try:
+                    if guided_progress():
+                        log.info(
+                            "Arquivo fiscal validado durante a espera pela tela de login; "
+                            "encerrando a espera manual para finalizar o checklist."
+                        )
+                        return
+                except Exception:
+                    log.debug("Falha ao consultar progresso guiado durante espera do login.", exc_info=True)
             self.page.wait_for_timeout(400)
         raise PortalTimeoutError(
             "O operador não abriu manualmente a tela de login durante o aprendizado guiado.",
