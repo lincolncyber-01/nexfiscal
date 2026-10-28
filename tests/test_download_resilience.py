@@ -12,6 +12,8 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
 from nexfiscal.authentication.login import LoginHandler
 from nexfiscal.browser.download_manager import DownloadManager
+from nexfiscal.database.models import Stage, StepStatus
+from nexfiscal.events import RunControl
 from nexfiscal.exceptions import FilePermissionError, LoginError
 from nexfiscal.portal.workflow_engine import CompanyWorkflow
 from nexfiscal.storage.file_manager import move_atomic
@@ -23,9 +25,13 @@ VALID_XML = b"<Nfse><InfNfse><Numero>123</Numero></InfNfse></Nfse>"
 class ReporterStub:
     def __init__(self) -> None:
         self.messages: list[str] = []
+        self.stages: list[tuple[Stage, StepStatus, str]] = []
 
     def assist(self, message: str) -> None:
         self.messages.append(message)
+
+    def stage(self, stage: Stage, status: StepStatus, message: str = "") -> None:
+        self.stages.append((stage, status, message))
 
 
 class ExecutionStub:
@@ -91,7 +97,11 @@ def workflow_stub(tmp_path: Path) -> CompanyWorkflow:
     workflow._guided_attach_page = None
     workflow._guided_download_events = 0
     workflow._guided_download_saved = 0
+    workflow._guided_book_saved = 0
+    workflow._guided_saved_xml_paths = []
+    workflow._guided_saved_book_paths = []
     workflow._guided_download_failures = 0
+    workflow.control = RunControl()
     workflow.dm = DownloadManager(workflow.settings.tmp_dir)
     workflow.reporter = ReporterStub()
     workflow.execs = ExecutionStub()
@@ -356,3 +366,21 @@ def test_guided_download_saves_consulta_response_under_original_portal_filename(
     assert workflow._guided_download_events == 1
     assert workflow._guided_download_saved == 1
     assert workflow._guided_download_failures == 0
+
+
+def test_guided_download_checklist_advances_when_xml_and_book_are_saved(tmp_path):
+    workflow = workflow_stub(tmp_path)
+    xml = DownloadStub("notas205241.xml", VALID_XML)
+    book_payload = b"%PDF-1.4\\nLivro Fiscal de teste\\n%%EOF"
+    book = DownloadStub("Livro Fiscal.pdf", book_payload)
+
+    workflow._capture_guided_download(xml)
+    workflow._capture_guided_download(book)
+
+    company_dir = workflow._guided_download_dest
+    assert (company_dir / "notas205241.xml").read_bytes() == VALID_XML
+    assert (company_dir / "Livro Fiscal.pdf").read_bytes() == book_payload
+    assert (Stage.XML, StepStatus.OK) == workflow.reporter.stages[0][:2]
+    assert (Stage.LIVRO, StepStatus.OK) in [(stage, status) for stage, status, _ in workflow.reporter.stages]
+    assert workflow.reporter.stages[-1][:2] == (Stage.ORGANIZACAO, StepStatus.OK)
+    assert workflow.control.consume_guided_progress()
