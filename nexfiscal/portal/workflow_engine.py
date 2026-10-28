@@ -137,7 +137,7 @@ class CompanyWorkflow:
     def _looks_like_guided_book(filename: str) -> bool:
         return bool(re.search(r"livro|fiscal|livro.?iss", filename, re.I))
 
-    def _report_guided_artifact_progress(self, dest: Path) -> None:
+    def _report_guided_artifact_progress(self, dest: Path) -> bool:
         """Reflect verified files captured during manual learning in the live checklist."""
         validator = XmlValidator()
         # Only count artifacts verified during this run; older files for a different
@@ -157,9 +157,11 @@ class CompanyWorkflow:
             self.reporter.stage(Stage.XML, StepStatus.OK, f"{len(xml_files)} XML válido(s) na pasta")
         if book_files:
             self.reporter.stage(Stage.LIVRO, StepStatus.OK, "Livro Fiscal salvo e verificado")
-        if xml_files and book_files:
+        complete = bool(xml_files and book_files)
+        if complete:
             self.reporter.stage(Stage.ORGANIZACAO, StepStatus.OK,
                                 "XML e Livro Fiscal verificados na pasta da empresa")
+        return complete
 
     def _record_guided_download_failure(self, filename: str, dest: Path, reason: str,
                                         exc: BaseException | None = None) -> None:
@@ -242,11 +244,11 @@ class CompanyWorkflow:
                          extra={**extra, "event": "guided_fiscal_book_saved",
                                 "status": "saved", "bytes_written": target.stat().st_size,
                                 "format": extension})
-                if self.control is not None:
+                complete = self._report_guided_artifact_progress(dest)
+                if complete and self.control is not None:
                     mark_progress = getattr(self.control, "mark_guided_progress", None)
                     if callable(mark_progress):
                         mark_progress()
-                self._report_guided_artifact_progress(dest)
                 return
             if kind == "zip":
                 candidates = self.dm.extract_zip(source)
@@ -284,11 +286,11 @@ class CompanyWorkflow:
                         if target not in self._guided_saved_xml_paths:
                             self._guided_saved_xml_paths.append(target)
                         self.reporter.stage(Stage.XML, StepStatus.OK, f"Já salvo: {target.name}")
-                        if self.control is not None:
+                        complete = self._report_guided_artifact_progress(dest)
+                        if complete and self.control is not None:
                             mark_progress = getattr(self.control, "mark_guided_progress", None)
                             if callable(mark_progress):
                                 mark_progress()
-                        self._report_guided_artifact_progress(dest)
                         continue
                     target = dest / (Path(base).stem + "_" + info.sha256[:8] + ".xml")
                 move_atomic(candidate, target)
@@ -303,11 +305,11 @@ class CompanyWorkflow:
                     self._guided_saved_xml_paths.append(target)
                 self.reporter.stage(Stage.XML, StepStatus.OK, f"Salvo: {target.name}")
                 self._log(Stage.XML, "OK", "XML salvo no aprendizado guiado", file=str(target))
-                if self.control is not None:
+                complete = self._report_guided_artifact_progress(dest)
+                if complete and self.control is not None:
                     mark_progress = getattr(self.control, "mark_guided_progress", None)
                     if callable(mark_progress):
                         mark_progress()
-                self._report_guided_artifact_progress(dest)
                 log.info("Download guiado salvo e verificado | destino=%s | bytes=%d | sha256=%s",
                          target, target.stat().st_size, info.sha256,
                          extra={**extra, "status": "saved", "sha256": info.sha256,
