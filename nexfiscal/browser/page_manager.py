@@ -73,12 +73,18 @@ class PageManager:
         self.settle()
 
     def settle(self, timeout_ms: int = 6000) -> None:
-        """Aguarda a página assentar (rede ociosa); não falha se continuar ativa."""
+        """Wait for page stability; tolerate idle timeouts but not a closed browser target."""
         try:
             self.page.wait_for_load_state("domcontentloaded", timeout=timeout_ms)
             self.page.wait_for_load_state("networkidle", timeout=timeout_ms)
-        except (PlaywrightTimeout, PlaywrightError):
-            pass
+        except PlaywrightTimeout:
+            # Long-polling portals may never become network-idle; DOM is still usable.
+            log.debug("Timeout aguardando página ociosa; seguindo com a página ativa.")
+        except PlaywrightError as exc:
+            message = str(exc).casefold()
+            if any(token in message for token in ("has been closed", "target closed", "browser has been closed")):
+                raise NetworkError("A página ou o navegador foi encerrado durante a operação.") from exc
+            log.warning("Falha Playwright ao aguardar estabilização da página.", exc_info=True)
 
     @staticmethod
     def classify(exc: Exception) -> Exception:
