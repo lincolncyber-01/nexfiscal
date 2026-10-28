@@ -95,12 +95,21 @@ class PageManager:
         loc = _unwrap(target)
         try:
             loc.click(timeout=4000)
-        except (PlaywrightTimeout, PlaywrightError):
-            try:  # elemento oculto (menu suspenso) ou coberto: clique via JS
-                loc.evaluate("el => el.click()")
-            except PlaywrightError as exc:
-                raise self.classify(exc) from exc
-        log.debug("Clique: %s", what)
+        except PlaywrightTimeout as exc:
+            # Never replay a side-effecting click through JS after a timeout: Playwright may
+            # have dispatched it already (e.g. export started just before navigation).
+            log.warning("Clique expirou e não será repetido via JavaScript | ação=%s", what,
+                        extra={"event": "playwright_click_timeout", "action": what})
+            raise PortalTimeoutError(f"Tempo esgotado ao executar a ação: {what or 'clique'}.") from exc
+        except PlaywrightError as exc:
+            classified = self.classify(exc)
+            log.warning("Clique Playwright falhou; evitando segundo clique via JavaScript | ação=%s | erro=%s",
+                        what, exc, extra={"event": "playwright_click_failed", "action": what,
+                                        "error_type": type(exc).__name__}, exc_info=True)
+            if classified is exc:
+                raise
+            raise classified from exc
+        log.debug("Clique confirmado pelo Playwright: %s", what)
         self.settle(3000)
         self.pause(0.5)
 
