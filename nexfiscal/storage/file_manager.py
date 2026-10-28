@@ -1,15 +1,21 @@
 """Operações seguras de arquivo e verificação de integridade básica."""
 from __future__ import annotations
 
+import errno
 import hashlib
+import logging
 import os
 import shutil
+import time
+import uuid
 import zipfile
 from pathlib import Path
 
 from lxml import etree
 
 from ..exceptions import FilePermissionError, InvalidFileError
+
+log = logging.getLogger("nexfiscal.storage")
 
 XML_PARSER_KW = dict(resolve_entities=False, no_network=True, load_dtd=False, huge_tree=False)
 
@@ -38,18 +44,45 @@ def ensure_dir(path: Path) -> Path:
 
 
 def move_atomic(src: Path, dst: Path) -> Path:
-    """Move para o destino final sem deixar arquivo parcial (copia p/ .part e renomeia)."""
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    part = dst.with_name(dst.name + ".part")
-    try:
-        shutil.copyfile(src, part)
-        os.replace(part, dst)
-    except OSError as exc:
-        part.unlink(missing_ok=True)
-        raise FilePermissionError(f"Não foi possível gravar '{dst}': {exc.strerror}") from exc
-    finally:
-        src.unlink(missing_ok=True)
-    return dst
+    """Persist sem arquivo parcial: copia para um .part único, confere e renomeia atomicamente.
+
+    Não remove a origem até o destino ter sido confirmado. Pequenas falhas transitórias,
+    especialmente locks temporários de antivírus no Windows, recebem retries limitados.
+    """
+    part = dst.with_name(f".{dst.name}.{uuid.uuid4().hex}.part")
+    last_error: OSError | None = None
+    for attempt in range(1, 4):
+        try:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(src, part)
+            source_size = src.stat().st_size
+            if part.stat().st_size != source_size:
+                raise OSError("Cópia incompleta: o tamanho de origem e destino diverge.")
+            os.replace(part, dst)
+            if not dst.is_file() or dst.stat().st_size != source_size:
+                raise OSError("O arquivo final não passou na verificação pós-gravação.")
+            try:
+                src.unlink(missing_ok=True)
+            except OSError:
+                log.warning("Destino confirmado, mas o arquivo temporário não pôde ser removido: %s", src,
+                            exc_info=True)
+            return dst
+        except OSError as exc:
+            last_error = exc
+            part.unlink(missing_ok=True)
+            retryable = isinstance(exc, PermissionError) or exc.errno in {
+                errno.EAGAIN, errno.EBUSY, errno.EINTR, getattr(errno, "ETXTBSY", -1)
+            }
+            if attempt < 3 and retryable:
+                delay = 0.15 * (2 ** (attempt - 1))
+                log.warning("Falha transitória ao persistir arquivo; nova tentativa %d/3 | destino=%s | erro=%s",
+                            attempt, dst, exc, extra={"event": "atomic_file_retry", "attempt": attempt,
+                                                     "destination": str(dst), "delay_seconds": delay})
+                time.sleep(delay)
+                continue
+            break
+    assert last_error is not None
+    raise FilePermissionError(f"Não foi possível gravar '{dst}': {last_error}") from last_error
 
 
 def detect_kind(head: bytes) -> str:
