@@ -164,36 +164,40 @@ class CompanyWorkflow:
             return False
 
     def _reconcile_guided_folder(self, dest: Path) -> None:
-        """Find newly written artifacts even if the browser download event was missed."""
+        """Reconcile all deliverables in the company folder, including files already present.
+
+        Do not rely on download events or a changed timestamp: Chromium may open a
+        fiscal PDF in a tab instead of emitting a download event, and a prior attempt
+        may already have saved the file. This is safe because the XML and Livro Fiscal
+        candidates are validated from their contents before the checklist is advanced.
+        """
         if not dest.is_dir():
             return
+        files = sorted((path for path in dest.iterdir() if path.is_file()),
+                       key=lambda path: path.name.casefold())
         validator = XmlValidator()
-        for path in dest.iterdir():
-            if not path.is_file():
+
+        # Pass 1: establish the XML evidence first, so book classification does not
+        # depend on filesystem enumeration order.
+        for path in files:
+            if path.suffix.lower() != ".xml":
                 continue
-            try:
-                stat = path.stat()
-            except OSError:
-                continue
-            signature = (stat.st_size, stat.st_mtime_ns)
-            if self._guided_baseline_files.get(path.name) == signature:
-                continue
-            suffix = path.suffix.lower()
-            if suffix == ".xml":
-                if validator.validate_file(path).valid and path not in self._guided_saved_xml_paths:
-                    self._guided_saved_xml_paths.append(path)
-                continue
-            if path in self._guided_saved_book_paths:
+            if validator.validate_file(path).valid and path not in self._guided_saved_xml_paths:
+                self._guided_saved_xml_paths.append(path)
+
+        # Pass 2: recognise a named Livro Fiscal or, once a valid XML exists, an
+        # opaque-name PDF/Excel/CSV downloaded by a portal. ZIPs containing individual
+        # XMLs must not be mistaken for the fiscal book.
+        after_xml = bool(self._guided_saved_xml_paths)
+        for path in files:
+            if path.suffix.lower() == ".xml" or path in self._guided_saved_book_paths:
                 continue
             try:
                 ext = validate_deliverable(path, ("pdf", "xls", "xlsx", "csv", "zip"))
             except (InvalidFileError, OSError):
                 continue
-            # XLSX files are ZIP containers too. A plain ZIP containing XML members
-            # is an XML bundle, not a Livro Fiscal, unless the portal explicitly labels it.
             xml_bundle = ext == "zip" and self._zip_contains_xml(path)
             looks_like_book = self._looks_like_guided_book(path.name)
-            after_xml = bool(self._guided_saved_xml_paths)
             if looks_like_book or (after_xml and not xml_bundle):
                 self._guided_saved_book_paths.append(path)
 
