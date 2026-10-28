@@ -205,13 +205,15 @@ class CompanyWorkflow:
                     log.warning("XML de download guiado recusado pela validação | arquivo=%s | motivo=%s",
                                 candidate.name, info.reason, extra=extra)
                     continue
-                if info.is_consulta_sem_notas:
-                    base = "Resposta_Consulta_NFSe_Sem_Notas_" + info.sha256[:12] + ".xml"
+                if info.is_resposta_consulta:
+                    # Preserve the portal's actual downloaded name for consultation
+                    # envelopes, including responses that state no invoices were found.
+                    base = candidate.name if candidate != source else name
                 else:
                     base = candidate.name if candidate != source else name
-                    base = sanitize_name(base) or ("NFSe_" + info.sha256[:12] + ".xml")
-                    if not base.lower().endswith(".xml"):
-                        base += ".xml"
+                base = sanitize_name(base) or ("NFSe_" + info.sha256[:12] + ".xml")
+                if not base.lower().endswith(".xml"):
+                    base += ".xml"
                 target = dest / base
                 if target.exists():
                     if target.stat().st_size == candidate.stat().st_size and target.read_bytes() == candidate.read_bytes():
