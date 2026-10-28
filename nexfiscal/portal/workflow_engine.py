@@ -237,7 +237,6 @@ class CompanyWorkflow:
         dest = paths.xml_dir
         timeout = max(self.settings.captcha_timeout_seconds, self.settings.assist_timeout_seconds)
         deadline = time.monotonic() + timeout
-        self._report_guided_artifact_progress(dest)
         complete = self._report_guided_artifact_progress(dest)
         if not self._guided_saved_book_paths:
             self._set(Stage.LIVRO, StepStatus.EM_ANDAMENTO, "Aguardando download manual do Livro Fiscal")
