@@ -196,7 +196,7 @@ class DownloadManager:
                             continue
                         raise DownloadError("O portal respondeu sem conteúdo para o arquivo solicitado.")
                     disp = resp.headers.get("content-disposition", "")
-                    match = re.search(r"filename\\*?=(?:UTF-8'')?\\\"?([^\\\";]+)", disp)
+                    match = re.search(r"filename\*?=(?:UTF-8'')?\"?([^\";]+)", disp)
                     name = unquote(match.group(1)) if match else (Path(unquote(urlparse(url).path)).name or "arquivo")
                     break
                 except PlaywrightError as exc:
