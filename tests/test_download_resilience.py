@@ -213,3 +213,36 @@ def test_login_submit_is_forbidden_after_captcha_has_been_seen():
 
     with pytest.raises(LoginError, match="clique manualmente"):
         handler._submit()
+
+
+def test_inline_file_download_retries_transient_playwright_network_error(tmp_path, monkeypatch):
+    page = PageStub()
+
+    class Response:
+        ok = True
+        status = 200
+        headers = {'content-disposition': 'attachment; filename="nota-inline.xml"'}
+
+        @staticmethod
+        def body() -> bytes:
+            return VALID_XML
+
+    class RequestStub:
+        calls = 0
+
+        def get(self, _url: str, timeout: int):
+            self.calls += 1
+            assert timeout > 0
+            if self.calls == 1:
+                raise PlaywrightError("temporary connection reset")
+            return Response()
+
+    page.context.request = RequestStub()
+    manager = DownloadManager(tmp_path / "inline", timeout_seconds=1)
+    monkeypatch.setattr("nexfiscal.browser.download_manager.time.sleep", lambda _seconds: None)
+
+    captured = manager._from_url(page, "https://portal.example/files/nota-inline.xml")
+
+    assert page.context.request.calls == 2
+    assert captured.suggested_name == "nota-inline.xml"
+    assert captured.path.read_bytes() == VALID_XML
