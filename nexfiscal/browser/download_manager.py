@@ -1,6 +1,7 @@
 """Captura de arquivos: downloads diretos, popups e conteúdo aberto inline (XML/PDF)."""
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 import time
@@ -228,7 +229,7 @@ class DownloadManager:
 
     @staticmethod
     def extract_zip(zip_path: Path, wanted_suffix: str = ".xml") -> list[Path]:
-        """Extrai (com proteção contra path traversal) os arquivos de um ZIP."""
+        """Extract matching ZIP entries without overwriting distinct same-named files."""
         out: list[Path] = []
         base = zip_path.parent / (zip_path.stem + "_unzipped")
         base.mkdir(exist_ok=True)
@@ -236,7 +237,21 @@ class DownloadManager:
             for member in zf.infolist():
                 if member.is_dir() or not member.filename.lower().endswith(wanted_suffix):
                     continue
-                dest = base / sanitize_name(Path(member.filename).name)
-                dest.write_bytes(zf.read(member))
-                out.append(dest)
+                filename = sanitize_name(Path(member.filename).name) or ("arquivo" + wanted_suffix)
+                payload = zf.read(member)
+                target = base / filename
+                if target.exists():
+                    if target.read_bytes() == payload:
+                        continue
+                    stem, suffix = Path(filename).stem, Path(filename).suffix
+                    digest = hashlib.sha256(payload).hexdigest()[:8]
+                    target = base / f"{stem}_{digest}{suffix}"
+                    serial = 2
+                    while target.exists() and target.read_bytes() != payload:
+                        target = base / f"{stem}_{digest}_{serial}{suffix}"
+                        serial += 1
+                    if target.exists():
+                        continue
+                target.write_bytes(payload)
+                out.append(target)
         return out
