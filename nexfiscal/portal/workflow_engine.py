@@ -365,14 +365,30 @@ class CompanyWorkflow:
             kind = detect_kind(read_head(source))
             suffix = Path(name).suffix.lower()
             book_named = self._looks_like_guided_book(name)
-            if book_named and suffix in {".pdf", ".xls", ".xlsx", ".csv", ".zip"}:
-                extension = validate_deliverable(source, ("pdf", "xls", "xlsx", "csv", "zip"))
+            book_extension = None
+            if suffix in {".pdf", ".xls", ".xlsx", ".csv", ".zip"}:
+                try:
+                    book_extension = validate_deliverable(source, ("pdf", "xls", "xlsx", "csv", "zip"))
+                except InvalidFileError:
+                    book_extension = None
+            # A generic PDF/Excel/CSV returned after an XML is also a book candidate:
+            # many portals use opaque names such as "download.pdf" or "relatorio.xlsx".
+            # Do not mistake a ZIP of individual XML invoices for the fiscal book.
+            xml_bundle = kind == "zip" and book_extension != "xlsx" and self._zip_contains_xml(source)
+            book_candidate = bool(
+                book_extension and (
+                    book_named or (self._guided_saved_xml_paths and not xml_bundle)
+                )
+            )
+            if book_candidate:
+                extension = book_extension
                 target = dest / name
                 if target.exists() and target.read_bytes() != source.read_bytes():
                     target = dest / f"{Path(name).stem}_{uuid.uuid4().hex[:8]}{Path(name).suffix}"
                 move_atomic(source, target)
                 validate_deliverable(target, ("pdf", "xls", "xlsx", "csv", "zip"))
-                self._guided_saved_book_paths.append(target)
+                if target not in self._guided_saved_book_paths:
+                    self._guided_saved_book_paths.append(target)
                 self._guided_book_saved += 1
                 self.reporter.stage(Stage.LIVRO, StepStatus.OK, f"Salvo: {target.name}")
                 self._log(Stage.LIVRO, "OK", "Livro Fiscal salvo no aprendizado guiado", file=str(target))
@@ -658,6 +674,11 @@ class CompanyWorkflow:
                              else "Nova tentativa com navegador limpo.")
             res.retry_company = infra
             return res
+
+        # In a first/unlearned fiscal route, the operator controls portal actions.
+        # Wait for both verified deliverables and do not run automated selector searches.
+        if self._should_use_manual_guided_flow():
+            return self._finish_manual_guided_flow(paths, out)
 
         # Um download fiscal manual validado pode ter concluído etapas enquanto o
         # operador estava no CAPTCHA. Não refaça essas etapas nem deixe o checklist
