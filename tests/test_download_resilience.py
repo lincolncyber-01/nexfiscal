@@ -15,7 +15,8 @@ from nexfiscal.browser.download_manager import DownloadManager
 from nexfiscal.database.models import Stage, StepStatus
 from nexfiscal.events import RunControl
 from nexfiscal.exceptions import FilePermissionError, LoginError
-from nexfiscal.portal.workflow_engine import CompanyWorkflow
+from nexfiscal.portal.workflow_engine import CompanyResult, CompanyWorkflow
+from nexfiscal.database.models import RunStatus
 from nexfiscal.storage.file_manager import move_atomic
 
 
@@ -90,7 +91,8 @@ class PageStub(EventEmitterStub):
 
 def workflow_stub(tmp_path: Path) -> CompanyWorkflow:
     workflow = CompanyWorkflow.__new__(CompanyWorkflow)
-    workflow.settings = SimpleNamespace(tmp_dir=tmp_path / "tmp", guided_learning=True)
+    workflow.settings = SimpleNamespace(tmp_dir=tmp_path / "tmp", guided_learning=True,
+                                        captcha_timeout_seconds=1, assist_timeout_seconds=1)
     workflow._guided_download_dest = tmp_path / "Cidade" / "Empresa"
     workflow._guided_download_context = None
     workflow._guided_download_pages = {}
@@ -385,3 +387,31 @@ def test_guided_download_checklist_advances_when_xml_and_book_are_saved(tmp_path
     assert (Stage.LIVRO, StepStatus.OK) in [(stage, status) for stage, status, _ in workflow.reporter.stages]
     assert workflow.reporter.stages[-1][:2] == (Stage.ORGANIZACAO, StepStatus.OK)
     assert workflow.control.consume_guided_progress()
+
+
+def test_manual_guided_flow_finishes_company_after_verified_xml_and_generic_pdf(tmp_path):
+    workflow = workflow_stub(tmp_path)
+    workflow.steps = {}
+    workflow._write_guided_manifest = lambda _paths, _out, _problems: None
+    workflow.period = SimpleNamespace(
+        competence=SimpleNamespace(label="2026-10"),
+        start_br="01/10/2026", end_br="31/10/2026",
+    )
+    workflow.row.razao_social = "Empresa Teste"
+    workflow.pm = SimpleNamespace(checkpoint=lambda: None)
+    workflow.page = SimpleNamespace(wait_for_timeout=lambda _ms: None)
+
+    workflow._capture_guided_download(DownloadStub("nota.xml", VALID_XML))
+    workflow._capture_guided_download(DownloadStub("relatorio.pdf", b"%PDF-1.4\\nLivro Fiscal\\n%%EOF"))
+
+    out = CompanyResult(RunStatus.EM_EXECUCAO, steps=workflow.steps)
+    result = workflow._finish_manual_guided_flow(
+        SimpleNamespace(xml_dir=workflow._guided_download_dest), out
+    )
+
+    assert result.status is RunStatus.CONCLUIDO
+    assert result.livro_ok is True
+    assert workflow.steps[Stage.XML.value] == StepStatus.OK.value
+    assert workflow.steps[Stage.LIVRO.value] == StepStatus.OK.value
+    assert workflow.steps[Stage.ORGANIZACAO.value] == StepStatus.OK.value
+    assert result.message == "Concluído"
