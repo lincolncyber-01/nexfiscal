@@ -164,7 +164,7 @@ class LoginHandler:
             self.engine.find(pc.LOGIN_BUTTON, timeout=6)
         except ElementNotFoundError:
             log.warning("Botão de login não pôde ser aprendido antes do envio manual.")
-        if self._captcha_seen:
+        if getattr(self, "_captcha_seen", False):
             instruction = (
                 "O CAPTCHA foi resolvido manualmente. Por segurança, clique manualmente em Entrar/Acessar; "
                 "o NexFiscal não enviará o formulário automaticamente depois do CAPTCHA."
