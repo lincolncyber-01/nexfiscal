@@ -1,6 +1,7 @@
 """Download dos XMLs de NFS-e: validação, deduplicação e organização."""
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 from dataclasses import dataclass, field
@@ -109,7 +110,7 @@ class XmlDownloader:
             log.info("Página %d: %d link(s) de XML.", page_no, len(group))
             for loc in group.locators:
                 self._handle_link(loc, dest, index, stats)
-            if not self._next_page():
+            if not self._next_page(signature):
                 break
         log.info("XMLs — encontrados: %d | baixados: %d | já existentes: %d | falhas: %d",
                  stats.found, stats.downloaded, stats.existing, stats.failed)
@@ -158,30 +159,47 @@ class XmlDownloader:
             self._store(p, dest, index, stats)
 
     def _store(self, path: Path, dest: Path, index: dict[str, XmlInfo], stats: XmlStats) -> None:
+        """Validate an XML and preserve the portal/archive filename when possible."""
         info = self.validator.validate_file(path)
         if not info.valid:
             path.unlink(missing_ok=True)
             raise InvalidFileError(f"XML inválido: {info.reason}")
-        stats.found += 1
-        if info.is_consulta_sem_notas:
-            base = f"Resposta_Consulta_NFSe_Sem_Notas_{info.sha256[:12]}"
-        else:
-            base = f"NFSe_{sanitize_name(info.numero)}" if info.numero else f"NFSe_{info.sha256[:12]}"
-        target = dest / f"{base}.xml"
+
+        original_name = sanitize_name(path.name) or f"NFSe_{info.sha256[:12]}.xml"
+        if not original_name.lower().endswith(".xml"):
+            original_name += ".xml"
+        target = dest / original_name
+
         if target.exists() and self.settings.existing_files == "skip_valid":
-            if self.validator.validate_file(target).valid:
+            existing_info = self.validator.validate_file(target)
+            if existing_info.valid:
                 if sha256_file(target) == info.sha256:
+                    stats.found += 1
                     stats.existing += 1
                     path.unlink(missing_ok=True)
                     return
-                target = dest / f"{base}_{info.sha256[:8]}.xml"  # mesmo número, conteúdo diferente
-                if target.exists():
-                    stats.existing += 1
-                    path.unlink(missing_ok=True)
-                    return
-        move_atomic(path, target)  # conteúdo original, sem modificação
-        if not target.is_file() or target.stat().st_size == 0:
-            raise InvalidFileError(f"O XML não foi gravado no destino configurado: {target}")
+
+                # Same portal filename but different valid content: keep both files.
+                suffix = info.sha256[:8]
+                candidate = dest / f"{Path(original_name).stem}_{suffix}.xml"
+                serial = 2
+                while candidate.exists():
+                    candidate_info = self.validator.validate_file(candidate)
+                    if candidate_info.valid and sha256_file(candidate) == info.sha256:
+                        stats.found += 1
+                        stats.existing += 1
+                        path.unlink(missing_ok=True)
+                        return
+                    candidate = dest / f"{Path(original_name).stem}_{suffix}_{serial}.xml"
+                    serial += 1
+                target = candidate
+            # An invalid existing file is replaced by the verified XML.
+
+        move_atomic(path, target)
+        if (not target.is_file() or target.stat().st_size == 0
+                or sha256_file(target) != info.sha256):
+            raise InvalidFileError(f"O XML gravado diverge do conteúdo validado: {target}")
+        stats.found += 1
         stats.downloaded += 1
         stats.files.append(target)
         if info.numero:
@@ -190,23 +208,49 @@ class XmlDownloader:
 
     # --------------------------------------------------------- paginação ---
     def _page_signature(self, loc) -> str:  # type: ignore[no-untyped-def]
+        """Fingerprint the whole result table so changes beyond its first rows are noticed."""
         try:
-            return normalize_text(loc.evaluate("el => ((el.closest('table') || document.body).innerText || '')")[:400])
+            text = loc.evaluate("el => ((el.closest('table') || document.body).innerText || '')")
+            return hashlib.sha256(normalize_text(text).encode("utf-8")).hexdigest()
         except PlaywrightError:
             return ""
 
-    def _next_page(self) -> bool:
+    def _next_page(self, current_signature: str | None = None) -> bool:
+        """Click pagination and wait until the result table actually changes."""
         nxt = self.engine.find(pc.NFSE_NEXT, timeout=1.5, required=False)
         if nxt is None:
             return False
         try:
-            cls = nxt.locator.evaluate("el => (el.className || '') + ' ' + (el.parentElement ? el.parentElement.className : '')")
+            cls = nxt.locator.evaluate(
+                "el => (el.className || '') + ' ' + (el.parentElement ? el.parentElement.className : '')"
+            )
             if re.search(r"disabled|inativ", str(cls), re.I):
                 return False
         except PlaywrightError:
             pass
+
         self.pm.click(nxt, "próxima página")
-        return True
+        wait_seconds = min(max(int(getattr(self.settings, "timeout_seconds", 8)), 3), 10)
+        deadline = time.monotonic() + wait_seconds
+        while time.monotonic() < deadline:
+            self.pm.checkpoint()
+            try:
+                self.page.wait_for_timeout(150)
+            except PlaywrightError:
+                return False
+            group = self.engine.find_all(pc.NFSE_XML, timeout=0, required=False)
+            if group is None or not group.locators:
+                continue
+            new_signature = self._page_signature(group.locators[0])
+            if new_signature and new_signature != current_signature:
+                return True
+
+        log.warning(
+            "A paginação foi acionada, mas os resultados não mudaram dentro do prazo; "
+            "interrompendo para evitar repetir a mesma página.",
+            extra={"event": "xml_pagination_no_change", "timeout_seconds": wait_seconds},
+        )
+        return False
 
     def _session_lost(self) -> bool:
         return bool(self.pm.contains_any(pc.SESSION_EXPIRED_PATTERNS)) or self._login_form_visible()
