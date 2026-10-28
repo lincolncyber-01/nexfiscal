@@ -25,6 +25,11 @@ from .dialogs import PortalsDialog, SettingsDialog, TextDialog
 from .worker import BatchWorker
 
 SYMBOL = {"PENDENTE": "○", "EM_ANDAMENTO": "●", "OK": "✓", "PULADO": "–", "PENDENCIA": "!", "ERRO": "✗"}
+
+
+def force_reprocess_for_start(force_checked: bool, from_db: bool) -> bool:
+    """Retomada/tentativa não deve reprocessar concluídas por causa da caixa de seleção."""
+    return bool(force_checked and not from_db)
 SHOWN_STAGES = [Stage.LOGIN, Stage.CAPTCHA, Stage.XML, Stage.LIVRO, Stage.ORGANIZACAO]
 
 
@@ -169,7 +174,8 @@ class MainWindow(QMainWindow):
         total = len([r for r in rows if r.cidade_norm in city_filter])
         self._prepare_dashboard(total, period)
         self.control = RunControl()
-        self.worker = BatchWorker(self.ctx, rows, period, city_filter, self.force.isChecked(), self.control)
+        self.worker = BatchWorker(self.ctx, rows, period, city_filter,
+                                  force_reprocess_for_start(self.force.isChecked(), from_db), self.control)
         self.worker.event.connect(self.on_event)
         self.worker.log_line.connect(self.on_log)
         self.worker.finished_ok.connect(self.on_finished)
