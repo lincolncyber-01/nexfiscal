@@ -159,16 +159,22 @@ class LoginHandler:
         )
 
     def _request_manual_submit(self) -> None:
-        """Aprende o seletor do botão, mas deixa o envio do formulário para o operador."""
+        """Learn the button selector but always leave submission to the operator."""
         try:
             self.engine.find(pc.LOGIN_BUTTON, timeout=6)
         except ElementNotFoundError:
             log.warning("Botão de login não pôde ser aprendido antes do envio manual.")
-        self.reporter.assist(
-            f"[STATUS: APRENDIZADO GUIADO ATIVO PARA: {self.page.url}] "
-            "Os campos foram preenchidos. Clique manualmente em Entrar no navegador; "
-            "o NexFiscal não enviará o formulário neste primeiro aprendizado."
-        )
+        if self._captcha_seen:
+            instruction = (
+                "O CAPTCHA foi resolvido manualmente. Por segurança, clique manualmente em Entrar/Acessar; "
+                "o NexFiscal não enviará o formulário automaticamente depois do CAPTCHA."
+            )
+        else:
+            instruction = (
+                "Os campos foram preenchidos. Clique manualmente em Entrar no navegador; "
+                "o NexFiscal não enviará o formulário durante este primeiro aprendizado."
+            )
+        self.reporter.assist(f"[STATUS: APRENDIZADO GUIADO ATIVO PARA: {self.page.url}] {instruction}")
 
     def _wait_captcha(self) -> None:
         if self.gate.wait_if_present(self._label, self._city):
