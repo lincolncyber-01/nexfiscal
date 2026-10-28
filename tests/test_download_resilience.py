@@ -485,13 +485,13 @@ def test_automatic_consulta_xml_without_notes_keeps_original_filename(tmp_path):
     downloader = _xml_store_stub()
     dest = tmp_path / "Empresa"
     dest.mkdir()
-    payload = b"""
+    payload = """
     <ConsultarNfseServicoPrestadoResposta>
       <ListaMensagemRetorno><MensagemRetorno>
         <Mensagem>NOTAS FISCAIS NÃO LOCALIZADAS.</Mensagem>
       </MensagemRetorno></ListaMensagemRetorno>
     </ConsultarNfseServicoPrestadoResposta>
-    """
+    """.encode("utf-8")
     stats = XmlStats()
     source = _write_xml(tmp_path / "tmp" / "consulta_09_2026.xml", payload)
 
