@@ -334,3 +334,25 @@ def test_download_capture_keeps_inline_navigation_when_click_raises(tmp_path):
 
     assert captured.suggested_name == "nota.xml"
     assert captured.path.read_bytes() == VALID_XML
+
+
+
+def test_guided_download_saves_consulta_response_under_original_portal_filename(tmp_path):
+    workflow = workflow_stub(tmp_path)
+    payload = b"""
+    <ConsultarNfseServicoPrestadoResposta>
+      <ListaMensagemRetorno>
+        <MensagemRetorno><Codigo>0</Codigo><Mensagem>Consulta concluida.</Mensagem></MensagemRetorno>
+      </ListaMensagemRetorno>
+    </ConsultarNfseServicoPrestadoResposta>
+    """
+    download = DownloadStub("notas205241.xml", payload)
+
+    workflow._capture_guided_download(download)
+
+    saved = workflow._guided_download_dest / "notas205241.xml"
+    assert saved.is_file()
+    assert saved.read_bytes() == payload
+    assert workflow._guided_download_events == 1
+    assert workflow._guided_download_saved == 1
+    assert workflow._guided_download_failures == 0

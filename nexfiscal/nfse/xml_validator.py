@@ -24,6 +24,7 @@ class XmlInfo:
     quantidade_notas: int = 0
     sha256: str = ""
     is_consulta_sem_notas: bool = False
+    is_resposta_consulta: bool = False
 
 
 def _first(root: etree._Element, *paths: str) -> str | None:
@@ -64,22 +65,28 @@ class XmlValidator:
             "consultarnfseservicoprestadoresposta",
             "consultarnfseservicotomadoresposta",
         }
-        if root_name in response_names:
-            messages = " ".join(t.strip() for t in root.itertext() if t and t.strip()).casefold()
-            if any(term in messages for term in (
-                "notas fiscais não localizadas", "notas fiscais nao localizadas",
-                "nenhuma nota", "nenhuma nfse", "nenhuma nfs-e",
-            )):
+        is_response = root_name in response_names
+        messages = " ".join(t.strip() for t in root.itertext() if t and t.strip()).casefold()
+        no_invoice_message = any(term in messages for term in (
+            "notas fiscais não localizadas", "notas fiscais nao localizadas",
+            "nenhuma nota", "nenhuma nfse", "nenhuma nfs-e",
+        ))
+        if is_response:
+            # A consulta do portal também é um XML útil para auditoria, mesmo quando
+            # não representa uma nota individual. Não descarte uma resposta bem-formada
+            # só porque o texto de retorno varia entre municípios.
+            info.is_resposta_consulta = True
+            if no_invoice_message:
                 info.valid = True
                 info.quantidade_notas = 0
                 info.is_consulta_sem_notas = True
                 info.reason = "Resposta da consulta preservada: NOTAS FISCAIS NÃO LOCALIZADAS."
                 return info
-            info.reason = f"O portal retornou uma resposta de consulta ({root_name}), não um XML fiscal de nota."
-            return info
 
         inf = f".//{_ln('InfNfse')}"
-        info.quantidade_notas = len(root.xpath(inf)) or len(root.xpath(f"//{_ln('Nfse')}")) or 1
+        inf_count = len(root.xpath(inf))
+        nfse_count = len(root.xpath(f"//{_ln('Nfse')}"))
+        info.quantidade_notas = inf_count or nfse_count or (0 if is_response else 1)
         info.numero = _first(root, f"{inf}/{_ln('Numero')}", f".//{_ln('Numero')}",
                              f".//{_ln('NumeroNfse')}", f".//{_ln('nNFSe')}")
         info.data_emissao = _first(root, f"{inf}/{_ln('DataEmissao')}", f".//{_ln('DataEmissao')}",
@@ -96,6 +103,8 @@ class XmlValidator:
             root, f"{inf}/{_ln('TomadorServico')}//{_ln('RazaoSocial')}",
             f".//{_ln('Tomador')}//{_ln('RazaoSocial')}", f".//{_ln('toma')}/{_ln('xNome')}")
         info.valid = True
+        if is_response and info.quantidade_notas == 0:
+            info.reason = "Resposta XML de consulta preservada; nenhuma nota individual foi identificada."
         return info
 
     def validate_file(self, path: Path) -> XmlInfo:
