@@ -1,6 +1,7 @@
 """Janela principal: seleção -> dashboard de execução -> relatório final."""
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from ..database.repositories import CompanyRepository
 from ..dates import Competence, Period
 from ..events import EventKind, ProgressEvent, RunControl
 from ..exceptions import ConfigurationError
+from ..memory.portal_memory_manager import PortalMemoryManager
 from ..portal.portal_registry import PortalRegistry
 from ..reports.export import export
 from ..spreadsheet.validator import ValidationReport, validate_spreadsheet
@@ -35,6 +37,7 @@ class MainWindow(QMainWindow):
         self.worker: BatchWorker | None = None
         self.control = RunControl()
         self.last_summary = None
+        self.last_cities: list[str] = []
         self.counts = {"ok": 0, "pend": 0, "err": 0}
         self.resize(820, 680)
         self.stack = QStackedWidget()
@@ -157,6 +160,7 @@ class MainWindow(QMainWindow):
         chosen -= set(skipped)
         if not chosen:
             return
+        self.last_cities = sorted(chosen, key=str.casefold)
         s.output_root = self.out.text().strip() or s.output_root
         s.competence = self.comp.text().strip() or None
         self.ctx.save_settings()
@@ -314,6 +318,13 @@ class MainWindow(QMainWindow):
             if key:
                 self.counts[key] += 1
             self._update_counts(ev.current)
+            final_step = {
+                "CONCLUIDO": "Empresa concluída",
+                "CONCLUIDO_COM_PENDENCIA": "Finalizado com pendência",
+                "ERRO": "Empresa finalizada com erro",
+            }.get(ev.status)
+            if final_step:
+                self.d_step.setText(final_step)
 
     def confirm_captcha_resolved(self) -> None:
         """Allow the operator to acknowledge a CAPTCHA they solved manually."""
@@ -348,6 +359,7 @@ class MainWindow(QMainWindow):
         self.last_summary = summary
         self.report_box.setPlainText(summary.report.to_text())
         self.b_retry.setEnabled(summary.report.erros + summary.report.pendencias > 0)
+        self.b_save_memory.setEnabled(bool(self.last_cities))
         self.stack.setCurrentIndex(2)
         self.status.setText("Cancelado — use 'Retomar pendentes'." if summary.cancelled else "Lote finalizado.")
 
@@ -365,6 +377,13 @@ class MainWindow(QMainWindow):
             b.clicked.connect(lambda _=False, e=ext.lower(): self.export_report(e))
             row.addWidget(b)
         lay.addLayout(row)
+        self.b_save_memory = QPushButton("SALVAR MEMÓRIA DO PORTAL")
+        self.b_save_memory.setToolTip(
+            "Grava e verifica no banco o conhecimento aprendido para os portais usados neste processamento."
+        )
+        self.b_save_memory.clicked.connect(self.save_portal_memory)
+        self.b_save_memory.setEnabled(False)
+        lay.addWidget(self.b_save_memory)
         self.b_retry = QPushButton("Tentar novamente empresas com erro/pendência")
         self.b_retry.clicked.connect(lambda: self.start(selected_only=False, from_db=True))
         back = QPushButton("Voltar")
@@ -372,6 +391,62 @@ class MainWindow(QMainWindow):
         lay.addWidget(self.b_retry)
         lay.addWidget(back)
         return w
+
+    def save_portal_memory(self) -> None:
+        """Force-persist and verify the learned memory for each portal used by the last batch."""
+        if not self.last_cities:
+            QMessageBox.information(self, "Memória do portal", "Não há portais associados à última execução.")
+            return
+
+        memory = PortalMemoryManager(self.ctx.db)
+        seen_portals: set[int] = set()
+        saved: list[str] = []
+        failures: list[str] = []
+        for city in self.last_cities:
+            portal = self.registry.resolve(city)
+            if portal is None:
+                failures.append(f"{city}: portal não encontrado no cadastro.")
+                continue
+            if portal.id in seen_portals:
+                continue
+            seen_portals.add(portal.id)
+            try:
+                profile = memory.load_profile(portal)
+                expected_selectors = len(profile.selectors)
+                expected_flows = len(profile.flows)
+                expected_notes = len(profile.notes)
+                memory.save_profile(profile, force=True)
+                persisted = memory.load_profile(portal)
+                if (persisted.selectors != profile.selectors or
+                        persisted.flows != profile.flows or persisted.notes != profile.notes):
+                    raise RuntimeError("a conferência após gravação divergiu da memória em uso")
+                saved.append(
+                    f"{', '.join(portal.cidades) or city}: "
+                    f"{expected_selectors} grupo(s) de seletores, "
+                    f"{expected_flows} fluxo(s), {expected_notes} anotação(ões)"
+                )
+                logging.getLogger("nexfiscal.ui").info(
+                    "Memória do portal salva e verificada | portal_id=%d | cidades=%s | seletores=%d | fluxos=%d | notas=%d",
+                    portal.id, ", ".join(portal.cidades), expected_selectors, expected_flows, expected_notes
+                )
+            except Exception as exc:
+                logging.getLogger("nexfiscal.ui").exception(
+                    "Falha ao salvar memória do portal para %s", city
+                )
+                failures.append(f"{city}: {type(exc).__name__}: {exc}")
+
+        lines = []
+        if saved:
+            lines.append("Memória gravada e conferida:")
+            lines.extend(f"• {item}" for item in saved)
+        if failures:
+            lines.append("Falhas:")
+            lines.extend(f"• {item}" for item in failures)
+        if saved and not failures:
+            QMessageBox.information(self, "Memória do portal", "\n".join(lines))
+            self.b_save_memory.setText("MEMÓRIA DO PORTAL SALVA ✓")
+        else:
+            QMessageBox.warning(self, "Memória do portal", "\n".join(lines) or "Nenhuma memória foi salva.")
 
     def export_report(self, ext: str) -> None:
         if not self.last_summary:

@@ -28,8 +28,10 @@ class PortalMemoryManager:
             last_recognition=portal.ultimo_reconhecimento)
         return profile
 
-    def save_profile(self, profile: PortalProfile, *, recognized_stage: str | None = None) -> None:
-        if not profile.dirty and recognized_stage is None:
+    def save_profile(self, profile: PortalProfile, *, recognized_stage: str | None = None,
+                     force: bool = False) -> None:
+        """Persist changed knowledge, or force a full rewrite when the operator requests it."""
+        if not profile.dirty and recognized_stage is None and not force:
             return
         with self.db.transaction():
             for (stage, key), strategies in profile.selectors.items():
