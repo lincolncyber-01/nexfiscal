@@ -10,6 +10,7 @@ Regras de falha:
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 import time
 import uuid
@@ -134,7 +135,7 @@ class CompanyWorkflow:
 
     @staticmethod
     def _looks_like_guided_book(filename: str) -> bool:
-        return bool(__import__("re").search(r"livro|fiscal|livro.?iss", filename, __import__("re").I))
+        return bool(re.search(r"livro|fiscal|livro.?iss", filename, re.I))
 
     def _report_guided_artifact_progress(self, dest: Path) -> None:
         """Reflect verified files captured during manual learning in the live checklist."""
