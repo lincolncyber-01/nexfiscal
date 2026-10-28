@@ -202,6 +202,10 @@ class MainWindow(QMainWindow):
         self.banner.setStyleSheet("background:#b00020;color:white;padding:10px;font-weight:bold;")
         self.banner.hide()
         lay.addWidget(self.banner)
+        self.b_captcha_continue = QPushButton("JÁ RESOLVI O CAPTCHA — CONTINUAR")
+        self.b_captcha_continue.clicked.connect(self.confirm_captcha_resolved)
+        self.b_captcha_continue.hide()
+        lay.addWidget(self.b_captcha_continue)
         self.d_counts, self.d_progress = QLabel(), QLabel()
         lay.addWidget(self.d_progress)
         lay.addWidget(self.d_counts)
@@ -233,10 +237,13 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentIndex(1)
 
     def _reset_stages(self) -> None:
+        self._progress_rank = 0
         for st in SHOWN_STAGES:
             self._set_stage(st, "PENDENTE")
         self.xml_bar.setValue(0)
         self.xml_bar.setMaximum(1)
+        self.b_captcha_continue.hide()
+        self.b_captcha_continue.setEnabled(True)
 
     def _set_stage(self, st: Stage, status: str, msg: str = "") -> None:
         self.stage_labels[st].setText(f"{st.title:<14} {SYMBOL.get(status, '○')}  {msg}")
@@ -261,24 +268,36 @@ class MainWindow(QMainWindow):
             if ev.status == StepStatus.EM_ANDAMENTO.value:
                 self.d_step.setText(ev.message or ev.stage.title)
             elif ev.status in (StepStatus.OK.value, StepStatus.PULADO.value):
-                # Avança o status geral assim que cada etapa confirma conclusão.
-                next_step = {
-                    Stage.CAPTCHA: "Concluindo login",
-                    Stage.LOGIN: "Preparando download de XML",
-                    Stage.XML: "Preparando Livro Fiscal",
-                    Stage.LIVRO: "Organizando arquivos",
-                    Stage.ORGANIZACAO: "Finalizando empresa",
-                }.get(ev.stage)
-                if next_step:
-                    self.d_step.setText(next_step)
+                # Progress is monotonic: delayed login/CAPTCHA events must not move the
+                # dashboard backwards after manually captured XML/book files.
+                rank = {
+                    Stage.LOGIN: 1, Stage.CAPTCHA: 1, Stage.XML: 2,
+                    Stage.LIVRO: 3, Stage.ORGANIZACAO: 4,
+                }.get(ev.stage, 0)
+                if rank >= getattr(self, "_progress_rank", 0):
+                    self._progress_rank = rank
+                    next_step = {
+                        Stage.CAPTCHA: "Concluindo login",
+                        Stage.LOGIN: "Preparando download de XML",
+                        Stage.XML: "Preparando Livro Fiscal",
+                        Stage.LIVRO: "Organizando arquivos",
+                        Stage.ORGANIZACAO: "Finalizando empresa",
+                    }.get(ev.stage)
+                    if next_step:
+                        self.d_step.setText(next_step)
             if ev.stage is Stage.CAPTCHA and ev.status in ("OK", "PULADO"):
                 self.banner.hide()
+                self.b_captcha_continue.hide()
+                self.b_captcha_continue.setEnabled(True)
         elif ev.kind is EventKind.CAPTCHA:
             self.banner.setStyleSheet("background:#b00020;color:white;padding:10px;font-weight:bold;")
             self.banner.setText(ev.message.replace(" | ", "\n"))
             self.banner.show()
+            self.b_captcha_continue.setEnabled(True)
+            self.b_captcha_continue.show()
             self._set_stage(Stage.CAPTCHA, "EM_ANDAMENTO", "aguardando resolução manual")
-            self.d_step.setText("Aguardando CAPTCHA")
+            if getattr(self, "_progress_rank", 0) < 2:
+                self.d_step.setText("Aguardando CAPTCHA")
             QApplication.alert(self)
             self.raise_()
         elif ev.kind is EventKind.ASSIST:
@@ -295,6 +314,15 @@ class MainWindow(QMainWindow):
             if key:
                 self.counts[key] += 1
             self._update_counts(ev.current)
+
+    def confirm_captcha_resolved(self) -> None:
+        """Allow the operator to acknowledge a CAPTCHA they solved manually."""
+        if self.control:
+            self.control.confirm_captcha_resolved()
+        self.b_captcha_continue.setEnabled(False)
+        self.banner.setStyleSheet("background:#1b5e20;color:white;padding:10px;font-weight:bold;")
+        self.banner.setText("Confirmação recebida. O NexFiscal vai retomar o fluxo; ele não resolve nem envia o CAPTCHA por você.")
+        self.banner.show()
 
     def on_log(self, line: str, level: int) -> None:
         self.log_box.appendPlainText(line)
