@@ -153,10 +153,11 @@ class LoginHandler:
 
     def _finish_guided_login_if_artifacts(self) -> bool:
         """A verified manual fiscal download proves the operator progressed past login."""
-        if not self._manual_guided_login or self.guided_progress is None:
+        guided_progress = getattr(self, "guided_progress", None)
+        if not self._manual_guided_login or guided_progress is None:
             return False
         try:
-            progressed = self.guided_progress()
+            progressed = guided_progress()
         except Exception:
             log.debug("Não foi possível consultar o progresso guiado; continuando login normal.", exc_info=True)
             return False
