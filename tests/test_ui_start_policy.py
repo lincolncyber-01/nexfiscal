@@ -1,4 +1,4 @@
-from nexfiscal.ui.main_window import force_reprocess_for_start
+from nexfiscal.ui.start_policy import force_reprocess_for_start
 
 
 def test_resume_and_retry_ignore_force_checkbox():
