@@ -278,6 +278,14 @@ class CompanyWorkflow:
                         log.info("Download guiado já existe e foi verificado | destino=%s | bytes=%d",
                                  target, target.stat().st_size,
                                  extra={**extra, "status": "duplicate_validated"})
+                        if target not in self._guided_saved_xml_paths:
+                            self._guided_saved_xml_paths.append(target)
+                        self.reporter.stage(Stage.XML, StepStatus.OK, f"Já salvo: {target.name}")
+                        if self.control is not None:
+                            mark_progress = getattr(self.control, "mark_guided_progress", None)
+                            if callable(mark_progress):
+                                mark_progress()
+                        self._report_guided_artifact_progress(dest)
                         continue
                     target = dest / (Path(base).stem + "_" + info.sha256[:8] + ".xml")
                 move_atomic(candidate, target)
