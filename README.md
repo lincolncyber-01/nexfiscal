@@ -35,6 +35,9 @@ Navegador já instalado? Em *Configurações* informe o canal (`chrome` ou `msed
 As versões verificadas estão em `constraints.txt`, aplicado automaticamente pelos arquivos de requisitos.
 Atualizações exigem repetir os testes e a auditoria de dependências. A CI verifica Python 3.12 em Linux e Windows.
 
+Em Ubuntu/Debian mínimos, instale também as bibliotecas nativas de Qt: `sudo apt-get install libegl1 libopengl0`.
+Para executar a interface normalmente, use uma sessão gráfica; a CI utiliza `QT_QPA_PLATFORM=offscreen`.
+
 ## Como iniciar
 
 ```bash

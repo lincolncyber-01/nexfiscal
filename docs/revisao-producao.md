@@ -58,6 +58,9 @@ Resultado local final: **107 testes passaram**, lint sem achados, `pip check` se
 **63 pacotes auditados, zero alertas e nenhum pacote ignorado**, após atualizar o pip. Os comandos
 `main.py --version` e `main.py portal list` também foram executados em uma pasta de dados de teste isolada.
 
+A primeira execução da CI detectou ausência de `libEGL.so.1` no runner Linux ao importar Qt.
+O workflow instala `libegl1`/`libopengl0` explicitamente e usa a plataforma Qt `offscreen` para os testes.
+
 O download local do Chromium falhou com ZIP vazio/truncado. Por isso não se declara teste visual do navegador
 ou homologação fiscal ponta a ponta. O novo build Windows na CI exige validação própria; `--version` apenas
 prova inicialização da CLI. A interface, o navegador visível e o processo fiscal real ainda precisam de homologação.
