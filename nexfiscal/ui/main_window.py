@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QInputDia
 
 from .. import APP_NAME
 from ..app import AppContext, bootstrap
-from ..database.models import CompanyRow, RunStatus, Stage, StepStatus
+from ..database.models import Stage, StepStatus
 from ..database.repositories import CompanyRepository
 from ..dates import Competence, Period
 from ..events import EventKind, ProgressEvent, RunControl
@@ -21,7 +21,7 @@ from ..memory.portal_memory_manager import PortalMemoryManager
 from ..portal.portal_registry import PortalRegistry
 from ..reports.export import export
 from ..spreadsheet.validator import ValidationReport, validate_spreadsheet
-from .dialogs import PortalsDialog, SettingsDialog, TextDialog
+from .dialogs import SettingsDialog, TextDialog
 from .worker import BatchWorker
 from .start_policy import force_reprocess_for_start
 from ..program_reset import reset_program as reset_program_state
@@ -151,7 +151,12 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Competência", exc.message)
             return
         if from_db:
-            rows = CompanyRepository(self.ctx.db, self.ctx.cipher).load_rows()
+            try:
+                rows = CompanyRepository(self.ctx.db, self.ctx.cipher).load_rows()
+            except Exception:
+                logging.getLogger("nexfiscal.ui").exception("Falha ao carregar empresas para retomada.")
+                QMessageBox.warning(self, "Retomar", "Não foi possível carregar as empresas. Consulte os logs e verifique a chave de credenciais.")
+                return
             if not rows:
                 QMessageBox.information(self, "Retomar", "Não há credenciais armazenadas. Selecione a planilha.")
                 return
@@ -174,7 +179,12 @@ class MainWindow(QMainWindow):
         self.last_cities = sorted(chosen, key=str.casefold)
         s.output_root = self.out.text().strip() or s.output_root
         s.competence = self.comp.text().strip() or None
-        self.ctx.save_settings()
+        try:
+            self.ctx.save_settings()
+        except OSError:
+            logging.getLogger("nexfiscal.ui").exception("Falha ao salvar configurações antes do lote.")
+            QMessageBox.warning(self, "Configurações", "Não foi possível salvar. Verifique permissões e espaço em disco.")
+            return
         norm = {c.lower() for c in chosen}
         city_filter = {r.cidade_norm for r in rows if r.cidade.lower() in norm}
         total = len([r for r in rows if r.cidade_norm in city_filter])
@@ -547,11 +557,11 @@ class MainWindow(QMainWindow):
         default = str(Path(self.ctx.settings.output_root) / f"relatorio_{self.last_summary.report.competencia.replace('/', '-')}.{ext}")
         path, _ = QFileDialog.getSaveFileName(self, "Exportar relatório", default, f"*.{ext}")
         if path:
-            Path(path).parent.mkdir(parents=True, exist_ok=True)
             try:
                 QMessageBox.information(self, "Exportado", str(export(self.last_summary.report, Path(path))))
-            except OSError as exc:
-                QMessageBox.warning(self, "Erro ao exportar", str(exc))
+            except Exception:
+                logging.getLogger("nexfiscal.ui").exception("Falha ao exportar relatório.")
+                QMessageBox.warning(self, "Erro ao exportar", "Não foi possível exportar. Consulte os logs.")
 
     def closeEvent(self, e) -> None:  # type: ignore[no-untyped-def]
         if self.worker and self.worker.isRunning():
@@ -559,15 +569,30 @@ class MainWindow(QMainWindow):
                 e.ignore()
                 return
             self.control.cancel()
-            self.worker.wait(15000)
+            if not self.worker.wait(15000):
+                QMessageBox.information(
+                    self, "Cancelamento em andamento",
+                    "Aguardando a operação atual terminar com segurança. Tente fechar novamente em instantes."
+                )
+                e.ignore()
+                return
         e.accept()
 
 
 def run_gui() -> int:
     app = QApplication.instance() or QApplication(sys.argv)
-    ctx = bootstrap()
-    win = MainWindow(ctx)
-    win.show()
-    code = app.exec()
-    ctx.db.close()
-    return code
+    try:
+        ctx = bootstrap()
+    except Exception as exc:
+        logging.getLogger("nexfiscal.ui").exception("Falha ao iniciar a aplicação.")
+        message = exc.message if isinstance(exc, ConfigurationError) else (
+            "Não foi possível iniciar. Verifique acesso às configurações, à chave e ao banco de dados."
+        )
+        QMessageBox.critical(None, "Falha ao iniciar NexFiscal", message)
+        return 2
+    try:
+        win = MainWindow(ctx)
+        win.show()
+        return app.exec()
+    finally:
+        ctx.db.close()

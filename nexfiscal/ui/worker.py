@@ -10,7 +10,7 @@ from ..controller import BatchRunner
 from ..database.models import CompanyRow
 from ..dates import Period
 from ..events import EventBus, RunControl
-from ..logs.logger import add_ui_handler, remove_handler
+from ..logs.logger import SECRETS, add_ui_handler, remove_handler
 
 
 class BatchWorker(QThread):
@@ -34,6 +34,6 @@ class BatchWorker(QThread):
             self.finished_ok.emit(runner.run(self.rows, self.period, cities=self.cities, force=self.force))
         except Exception as exc:  # erro de configuração (ex.: navegador não instalado)
             logging.getLogger("nexfiscal").exception("Falha no lote")
-            self.failed.emit(str(exc))
+            self.failed.emit(SECRETS.redact(str(exc)))
         finally:
             remove_handler(handler)

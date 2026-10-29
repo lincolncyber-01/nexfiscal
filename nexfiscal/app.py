@@ -24,4 +24,5 @@ def bootstrap() -> AppContext:
     store = SettingsStore()
     settings = store.load()
     setup_logging(settings.log_dir, settings.log_level)
-    return AppContext(settings, store, Database(settings.db_file), CredentialCipher(data_dir()))
+    cipher = CredentialCipher(data_dir())
+    return AppContext(settings, store, Database(settings.db_file), cipher)

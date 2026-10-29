@@ -14,6 +14,7 @@ from pathlib import Path
 from lxml import etree
 
 from ..exceptions import FilePermissionError, InvalidFileError
+from .archive import validate_archive
 
 log = logging.getLogger("nexfiscal.storage")
 
@@ -35,7 +36,7 @@ def sha256_bytes(data: bytes) -> str:
 def ensure_dir(path: Path) -> Path:
     try:
         path.mkdir(parents=True, exist_ok=True)
-        probe = path / ".nexfiscal_write_test"
+        probe = path / f".nexfiscal_write_test_{uuid.uuid4().hex}"
         probe.write_bytes(b"")
         probe.unlink()
     except OSError as exc:
@@ -136,7 +137,9 @@ def validate_deliverable(path: Path, allowed: tuple[str, ...] = ("pdf", "xml", "
         raise InvalidFileError("O arquivo baixado é uma página HTML (provável erro ou sessão expirada).")
     if kind == "pdf":
         ext = "pdf"
-        tail = path.read_bytes()[-2048:]
+        with path.open("rb") as stream:
+            stream.seek(max(0, path.stat().st_size - 2048))
+            tail = stream.read(2048)
         if b"%%EOF" not in tail:
             raise InvalidFileError("PDF incompleto (marcador de fim ausente).")
     elif kind == "xls":
@@ -145,6 +148,7 @@ def validate_deliverable(path: Path, allowed: tuple[str, ...] = ("pdf", "xml", "
         if not zipfile.is_zipfile(path):
             raise InvalidFileError("Arquivo ZIP/XLSX corrompido.")
         with zipfile.ZipFile(path) as zf:
+            validate_archive(zf)
             if zf.testzip() is not None:
                 raise InvalidFileError("Arquivo ZIP/XLSX corrompido.")
             ext = "xlsx" if any(n.startswith("xl/") for n in zf.namelist()) else "zip"

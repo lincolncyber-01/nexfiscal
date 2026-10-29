@@ -3,13 +3,14 @@ from __future__ import annotations
 
 import json
 import os
-import uuid
 from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
 from ..security import secure_path
+from ..exceptions import ConfigurationError
+from ..storage.atomic import atomic_write_text
 
 
 def data_dir() -> Path:
@@ -65,33 +66,22 @@ class SettingsStore:
         self.path = path or data_dir() / "settings.json"
 
     def load(self) -> Settings:
-        if self.path.exists():
-            try:
-                return Settings.model_validate(json.loads(self.path.read_text("utf-8")))
-            except (ValueError, OSError):
-                pass
-        return Settings()
+        try:
+            payload = self.path.read_text("utf-8")
+        except FileNotFoundError:
+            return Settings()
+        except UnicodeError as exc:
+            raise ConfigurationError(f"Configurações devem usar UTF-8: {self.path}.") from exc
+        except OSError as exc:
+            raise ConfigurationError(f"Não foi possível ler as configurações: {self.path}.") from exc
+        try:
+            return Settings.model_validate(json.loads(payload))
+        except (ValueError, UnicodeError) as exc:
+            raise ConfigurationError(
+                f"Configurações inválidas em '{self.path}'. Corrija o JSON e seus valores; "
+                "o arquivo foi preservado."
+            ) from exc
 
     def save(self, settings: Settings) -> None:
         """Persist settings atomically so a crash cannot leave a truncated JSON file."""
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        temp = self.path.with_name(f".{self.path.name}.{uuid.uuid4().hex}.tmp")
-        try:
-            payload = settings.model_dump_json(indent=2)
-            with temp.open("w", encoding="utf-8", newline="\n") as stream:
-                stream.write(payload)
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.replace(temp, self.path)
-        except OSError:
-            try:
-                temp.unlink(missing_ok=True)
-            except OSError:
-                pass
-            raise
-        finally:
-            # A failed replace may leave the temporary file on unusual file systems.
-            try:
-                temp.unlink(missing_ok=True)
-            except OSError:
-                pass
+        atomic_write_text(self.path, settings.model_dump_json(indent=2))

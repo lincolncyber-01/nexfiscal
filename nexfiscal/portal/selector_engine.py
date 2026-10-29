@@ -666,6 +666,8 @@ class SelectorEngine:
     def find(self, spec: ElementSpec, timeout: float | None = None, required: bool = True) -> FoundElement | None:
         deadline = time.monotonic() + (self.timeout if timeout is None else timeout)
         while True:
+            if self.control:
+                self.control.checkpoint()
             items, strat, failed = self._try_memory(spec, multi=False)
             if items and strat:
                 self.profile.record_success(spec.stage.value, spec.key, strat)  # type: ignore[union-attr]
@@ -696,6 +698,8 @@ class SelectorEngine:
     def find_all(self, spec: ElementSpec, timeout: float | None = None, required: bool = True) -> FoundGroup | None:
         deadline = time.monotonic() + (self.timeout if timeout is None else timeout)
         while True:
+            if self.control:
+                self.control.checkpoint()
             items, strat, failed = self._try_memory(spec, multi=True)
             if items and strat:
                 self.profile.record_success(spec.stage.value, spec.key, strat)  # type: ignore[union-attr]
