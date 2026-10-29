@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from urllib.parse import urlsplit, urlunsplit
 from collections.abc import Callable, Iterable
 
 from ..database.database import Database
@@ -13,6 +14,22 @@ from ..utils import normalize_city
 log = logging.getLogger("nexfiscal.portal")
 
 
+def _url_for_log(url: str) -> str:
+    """Remove query/fragment data from portal URLs before writing application logs."""
+    try:
+        parsed = urlsplit(url)
+        host = parsed.hostname or ""
+        port = parsed.port
+        if ":" in host and not host.startswith("["):
+            host = f"[{host}]"
+        if port and not ((parsed.scheme == "http" and port == 80) or
+                         (parsed.scheme == "https" and port == 443)):
+            host = f"{host}:{port}"
+        return urlunsplit((parsed.scheme, host, parsed.path or "/", "", ""))
+    except ValueError:
+        return "<URL de portal inválida>"
+
+
 class PortalRegistry:
     def __init__(self, db: Database) -> None:
         self.repo = PortalRepository(db)
@@ -20,7 +37,7 @@ class PortalRegistry:
     def register(self, cities: Iterable[str] | str, url: str, nome: str | None = None) -> Portal:
         cities = [cities] if isinstance(cities, str) else list(cities)
         portal = self.repo.register(cities, url, nome)
-        log.info("Portal cadastrado: %s -> %s", ", ".join(cities), portal.url)
+        log.info("Portal cadastrado: %s -> %s", ", ".join(cities), _url_for_log(portal.url))
         return portal
 
     def resolve(self, city: str) -> Portal | None:

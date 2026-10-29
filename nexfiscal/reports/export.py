@@ -12,6 +12,15 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
 from .report_generator import Report
 
+def _safe_csv_cell(value):
+    """Neutralize spreadsheet formula injection in untrusted textual report fields."""
+    if not isinstance(value, str):
+        return value
+    trimmed = value.lstrip(" \t\r\n")
+    if value.startswith(("\t", "\r", "\n")) or (trimmed and trimmed[0] in "=+-@"):
+        return "'" + value
+    return value
+
 HEADERS = ["Cidade", "Empresa", "Competência", "Status", "XML encontrados", "XML baixados",
            "XML já existentes", "XML falhas", "Livro Fiscal", "Mensagem"]
 
@@ -25,7 +34,7 @@ def to_csv(rep: Report, path: Path) -> Path:
     with path.open("w", newline="", encoding="utf-8-sig") as fh:
         w = csv.writer(fh, delimiter=";")
         w.writerow(HEADERS)
-        w.writerows(_rows(rep))
+        w.writerows([[_safe_csv_cell(value) for value in row] for row in _rows(rep)])
     return path
 
 

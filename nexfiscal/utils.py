@@ -73,7 +73,9 @@ def sanitize_name(name: str, replacement: str = "-") -> str:
     cleaned = re.sub(r"\s+", " ", cleaned)
     reserved = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)),
                 *(f"lpt{i}" for i in range(1, 10))}
-    if cleaned.lower() in reserved:
+    # Windows reserves these device names even when an extension follows (CON.txt).
+    device_stem = cleaned.split(".", 1)[0].rstrip(" .").casefold()
+    if device_stem in reserved:
         cleaned = f"_{cleaned}"
     return cleaned or "_"
 

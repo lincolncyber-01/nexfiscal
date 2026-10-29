@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
 from pathlib import Path
 from typing import Literal
 
@@ -72,4 +73,25 @@ class SettingsStore:
         return Settings()
 
     def save(self, settings: Settings) -> None:
-        self.path.write_text(settings.model_dump_json(indent=2), "utf-8")
+        """Persist settings atomically so a crash cannot leave a truncated JSON file."""
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temp = self.path.with_name(f".{self.path.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            payload = settings.model_dump_json(indent=2)
+            with temp.open("w", encoding="utf-8", newline="\n") as stream:
+                stream.write(payload)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temp, self.path)
+        except OSError:
+            try:
+                temp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
+        finally:
+            # A failed replace may leave the temporary file on unusual file systems.
+            try:
+                temp.unlink(missing_ok=True)
+            except OSError:
+                pass
