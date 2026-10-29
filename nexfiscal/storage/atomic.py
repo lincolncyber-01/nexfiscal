@@ -20,7 +20,8 @@ def atomic_output(path: Path) -> Iterator[Path]:
     temporary = Path(name)
     try:
         yield temporary
-        with temporary.open("rb") as stream:
+        # Windows _commit (used by fsync) requires a writable descriptor.
+        with temporary.open("r+b") as stream:
             os.fsync(stream.fileno())
         os.replace(temporary, path)
     finally:

@@ -1,5 +1,6 @@
 """Failure-path regression tests: never publish partial state or report false success."""
 import json
+import os
 import sqlite3
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -17,6 +18,7 @@ from nexfiscal.portal import guided_learning_session
 from nexfiscal.portal.guided_action_recorder import GuidedActionRecorder
 from nexfiscal.portal.workflow_engine import CompanyWorkflow
 from nexfiscal.storage.organizer import OutputLayout
+from nexfiscal.storage.atomic import atomic_write_text
 
 
 @pytest.mark.parametrize("payload", [b'{"timeout_seconds":', b'{"timeout_seconds": -1}', b'\xff'])
@@ -26,6 +28,24 @@ def test_invalid_settings_are_preserved_and_never_silently_replaced(tmp_path, pa
     with pytest.raises(ConfigurationError):
         SettingsStore(path).load()
     assert path.read_bytes() == payload
+
+
+def test_atomic_write_syncs_through_a_writable_descriptor(tmp_path, monkeypatch):
+    original_fsync = os.fsync
+    synced = []
+
+    def windows_compatible_fsync(fd):
+        # A zero-byte write also rejects read-only descriptors on POSIX, letting
+        # Linux exercise the Windows fsync precondition without changing bytes.
+        os.write(fd, b"")
+        synced.append(fd)
+        original_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", windows_compatible_fsync)
+    path = tmp_path / "state.json"
+    atomic_write_text(path, '{"complete": true}')
+    assert path.read_text() == '{"complete": true}'
+    assert len(synced) == 1
 
 
 def test_failed_commit_rolls_back_and_connection_can_be_reused(tmp_path):

@@ -54,12 +54,14 @@ configuração corrompida, regressão destrutiva de `learn`, ZIPs excessivos, f�
 contexto/redação de logs, cancelamento, recursos de navegador, fechamento da GUI e CAPTCHA em retentativas.
 A integração HTTP usa servidor local e o cliente real do Playwright, com HTTP 500, HTTP 401 e XML sem notas.
 
-Resultado local final: **107 testes passaram**, lint sem achados, `pip check` sem incompatibilidades e
+Resultado local final: **108 testes passaram**, lint sem achados, `pip check` sem incompatibilidades e
 **63 pacotes auditados, zero alertas e nenhum pacote ignorado**, após atualizar o pip. Os comandos
 `main.py --version` e `main.py portal list` também foram executados em uma pasta de dados de teste isolada.
 
 A primeira execução da CI detectou ausência de `libEGL.so.1` no runner Linux ao importar Qt.
 O workflow instala `libegl1`/`libopengl0` explicitamente e usa a plataforma Qt `offscreen` para os testes.
+O runner Windows também detectou que `fsync` exige descritor gravável; o temporário é aberto com `r+b`
+antes da sincronização. Uma regressão adicional verifica esse requisito também em Linux.
 
 O download local do Chromium falhou com ZIP vazio/truncado. Por isso não se declara teste visual do navegador
 ou homologação fiscal ponta a ponta. O novo build Windows na CI exige validação própria; `--version` apenas
