@@ -70,16 +70,36 @@ class CompanyRepository:
 
 # ----------------------------------------------------------------- portais ---
 def normalize_url(url: str) -> str:
+    """Normalize an HTTP(S) portal URL and reject malformed or credential-bearing URLs."""
     url = (url or "").strip()
     if not url:
         raise ConfigurationError("URL do portal vazia.")
+    if any(ord(char) < 32 for char in url):
+        raise ConfigurationError("URL inválida: remova caracteres de controle.")
     if not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", url):
         url = "https://" + url
-    parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https") or not parsed.netloc:
-        raise ConfigurationError(f"URL inválida: {url}")
-    return url.rstrip("/") if not parsed.path.strip("/") and not parsed.query else url
 
+    try:
+        parsed = urlparse(url)
+        hostname = parsed.hostname
+        # Accessing .port performs urllib's range/format validation.
+        port = parsed.port
+    except ValueError as exc:
+        raise ConfigurationError("URL inválida. Informe um endereço HTTP(S) válido.") from exc
+
+    if parsed.scheme.lower() not in ("http", "https") or not parsed.netloc or not hostname:
+        raise ConfigurationError("URL inválida. Informe um endereço HTTP(S) válido.")
+    if parsed.username is not None or parsed.password is not None:
+        raise ConfigurationError(
+            "A URL do portal não pode conter usuário ou senha embutidos. "
+            "Use os campos próprios de credenciais."
+        )
+    if any(char.isspace() for char in parsed.netloc):
+        raise ConfigurationError("URL inválida. O endereço do portal contém espaços.")
+    if port is not None and not 1 <= port <= 65535:
+        raise ConfigurationError("Porta inválida na URL do portal.")
+
+    return url.rstrip("/") if not parsed.path.strip("/") and not parsed.query else url
 
 class PortalRepository:
     def __init__(self, db: Database) -> None:
