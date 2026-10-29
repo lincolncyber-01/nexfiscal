@@ -78,13 +78,16 @@ class SettingsStore:
         temp = self.path.with_name(f".{self.path.name}.{uuid.uuid4().hex}.tmp")
         try:
             payload = settings.model_dump_json(indent=2)
-            with temp.open("w", encoding="utf-8", newline="\\n") as stream:
+            with temp.open("w", encoding="utf-8", newline="\n") as stream:
                 stream.write(payload)
                 stream.flush()
                 os.fsync(stream.fileno())
             os.replace(temp, self.path)
         except OSError:
-            temp.unlink(missing_ok=True)
+            try:
+                temp.unlink(missing_ok=True)
+            except OSError:
+                pass
             raise
         finally:
             # A failed replace may leave the temporary file on unusual file systems.
