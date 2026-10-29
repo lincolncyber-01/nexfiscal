@@ -423,7 +423,14 @@ class MainWindow(QMainWindow):
         self.d_step.setText("-")
         self.d_progress.setText("")
         self.log_box.clear()
-        self._prepare_dashboard(0, Period.resolve())
+        self.total = 0
+        self.counts = {"ok": 0, "pend": 0, "err": 0}
+        self._reset_stages()
+        self._update_counts(0)
+        self.banner.hide()
+        self.b_pause.setText("PAUSAR")
+        self.b_pause.setEnabled(True)
+        self.b_cancel.setEnabled(True)
         self.status.setText("Programa resetado. Selecione uma nova planilha para começar.")
         self.stack.setCurrentIndex(0)
         QMessageBox.information(
