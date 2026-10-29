@@ -193,7 +193,7 @@ class SettingsDialog(QDialog):
             QMessageBox.information(self, "Credenciais", f"{n} credencial(is) removida(s).")
 
     def _save(self) -> None:
-        s = self.ctx.settings
+        s = self.ctx.settings.model_copy(deep=True)
         s.output_root = self.out.text().strip() or s.output_root
         s.competence = self.comp.text().strip() or None
         s.start_date, s.end_date = self.start.text().strip() or None, self.end.text().strip() or None
@@ -204,5 +204,12 @@ class SettingsDialog(QDialog):
         s.headless, s.save_error_screenshots = self.headless.isChecked(), self.shots.isChecked()
         s.assisted_recognition = self.assist.isChecked()
         s.log_level = self.level.currentText()
-        self.ctx.save_settings()
+        try:
+            self.ctx.store.save(s)
+        except OSError:
+            import logging
+            logging.getLogger("nexfiscal.ui").exception("Falha ao salvar configurações.")
+            QMessageBox.warning(self, "Configurações", "Não foi possível salvar. Verifique permissões e espaço em disco.")
+            return
+        self.ctx.settings = s
         self.accept()

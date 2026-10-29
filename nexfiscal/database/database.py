@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
+import logging
 import threading
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
@@ -9,6 +10,9 @@ from pathlib import Path
 from typing import Any
 
 from ..security import secure_path
+from ..exceptions import ConfigurationError
+
+log = logging.getLogger("nexfiscal.database")
 
 SCHEMA_VERSION = 2
 
@@ -119,12 +123,22 @@ class Database:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
+        self._savepoint_serial = 0
         self._conn = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None)
         self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA foreign_keys=ON")
-        self._conn.execute("PRAGMA busy_timeout=5000")
-        self._init_schema()
+        try:
+            self._conn.execute("PRAGMA busy_timeout=5000")
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA foreign_keys=ON")
+            version = self._conn.execute("PRAGMA user_version").fetchone()[0]
+            if version > SCHEMA_VERSION:
+                raise ConfigurationError(
+                    "Este banco foi criado por uma versão mais recente do NexFiscal. Atualize o programa."
+                )
+            self._init_schema()
+        except BaseException:
+            self._conn.close()
+            raise
         for suffix in ("", "-wal", "-shm"):
             candidate = Path(str(self.path) + suffix)
             if candidate.exists():
@@ -160,14 +174,24 @@ class Database:
     @contextmanager
     def transaction(self) -> Iterator[None]:
         with self._lock:
-            self._conn.execute("BEGIN")
+            nested = self._conn.in_transaction
+            self._savepoint_serial += 1
+            savepoint = f"nexfiscal_{self._savepoint_serial}"
+            self._conn.execute(f"SAVEPOINT {savepoint}" if nested else "BEGIN")
             try:
                 yield
+                self._conn.execute(f"RELEASE SAVEPOINT {savepoint}" if nested else "COMMIT")
             except BaseException:
-                self._conn.execute("ROLLBACK")
+                if self._conn.in_transaction:
+                    try:
+                        if nested:
+                            self._conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                            self._conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+                        else:
+                            self._conn.execute("ROLLBACK")
+                    except sqlite3.Error:
+                        log.exception("Falha no rollback; feche a aplicação e verifique o banco.")
                 raise
-            else:
-                self._conn.execute("COMMIT")
 
     def close(self) -> None:
         with self._lock:

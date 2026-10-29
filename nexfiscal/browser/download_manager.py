@@ -17,6 +17,7 @@ from playwright.sync_api import Page
 
 from ..exceptions import DownloadError, NexFiscalError
 from ..storage.file_manager import detect_kind, read_head
+from ..storage.archive import validate_archive
 from ..utils import sanitize_name
 
 log = logging.getLogger("nexfiscal.download")
@@ -174,6 +175,7 @@ class DownloadManager:
         name = "arquivo"
         try:
             for attempt in range(1, 4):
+                resp = None
                 try:
                     resp = page.context.request.get(url, timeout=self.timeout * 1000)
                     if not resp.ok:
@@ -209,6 +211,14 @@ class DownloadManager:
                                 attempt, exc, extra={"event": "inline_download_retry", "attempt": attempt,
                                                     "delay_seconds": delay})
                     time.sleep(delay)
+                finally:
+                    # Playwright retains response bodies until dispose/context close.
+                    dispose = getattr(resp, "dispose", None)
+                    if callable(dispose):
+                        try:
+                            dispose()
+                        except PlaywrightError:
+                            log.debug("Resposta inline já encerrada ao liberar recursos.", exc_info=True)
             if not body:
                 raise DownloadError("O portal não entregou um arquivo válido.")
         finally:
@@ -232,12 +242,13 @@ class DownloadManager:
         """Extract matching ZIP entries without overwriting distinct same-named files."""
         out: list[Path] = []
         base = zip_path.parent / (zip_path.stem + "_unzipped")
-        base.mkdir(exist_ok=True)
         with zipfile.ZipFile(zip_path) as zf:
+            validate_archive(zf)
+            base.mkdir(exist_ok=True)
             for member in zf.infolist():
                 if member.is_dir() or not member.filename.lower().endswith(wanted_suffix):
                     continue
-                filename = sanitize_name(Path(member.filename).name) or ("arquivo" + wanted_suffix)
+                filename = sanitize_name(Path(member.filename.replace("\\", "/")).name) or ("arquivo" + wanted_suffix)
                 payload = zf.read(member)
                 target = base / filename
                 if target.exists():

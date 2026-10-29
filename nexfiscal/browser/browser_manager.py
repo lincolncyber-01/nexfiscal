@@ -19,12 +19,14 @@ class BrowserManager:
         self._browser: Browser | None = None
 
     def start(self) -> "BrowserManager":
-        self._pw = sync_playwright().start()
-        launcher = getattr(self._pw, self.settings.browser)
+        if self.is_connected:
+            return self
         kwargs: dict = {"headless": self.settings.headless}
         if self.settings.browser_channel and self.settings.browser == "chromium":
             kwargs["channel"] = self.settings.browser_channel
         try:
+            self._pw = sync_playwright().start()
+            launcher = getattr(self._pw, self.settings.browser)
             self._browser = launcher.launch(**kwargs)
         except Exception as exc:
             self.stop()
@@ -52,14 +54,21 @@ class BrowserManager:
 
     def new_page(self) -> tuple[BrowserContext, Page]:
         ctx = self.new_context()
-        return ctx, ctx.new_page()
+        try:
+            return ctx, ctx.new_page()
+        except BaseException:
+            try:
+                ctx.close()
+            except Exception:
+                log.warning("Falha ao fechar contexto após erro na criação da página.", exc_info=True)
+            raise
 
     def stop(self) -> None:
         for closer in (lambda: self._browser and self._browser.close(), lambda: self._pw and self._pw.stop()):
             try:
                 closer()
             except Exception:  # pragma: no cover
-                pass
+                log.warning("Falha ao encerrar recurso do navegador.", exc_info=True)
         self._browser = self._pw = None
 
     def __enter__(self) -> "BrowserManager":

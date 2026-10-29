@@ -10,6 +10,7 @@ from ..config.settings import data_dir
 from ..dates import Competence
 from ..utils import city_folder_name, company_folder_name
 from .file_manager import ensure_dir
+from .atomic import atomic_write_text
 
 
 @dataclass(frozen=True)
@@ -42,7 +43,7 @@ class OutputLayout:
         folder.mkdir(parents=True, exist_ok=True)
         city = city_folder_name(str(data.get("cidade") or "cidade"))
         company = company_folder_name(str(data.get("razao_social") or data.get("empresa") or "empresa"))
-        competence = str(data.get("competencia") or "sem-competencia").replace("/", "-")
+        competence = city_folder_name(str(data.get("competencia") or "sem-competencia"))
         target = folder / f"{city}--{company}--{competence}.json"
-        target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), "utf-8")
+        atomic_write_text(target, json.dumps(payload, ensure_ascii=False, indent=2))
         return target

@@ -7,8 +7,10 @@ from pathlib import Path
 
 from ..database.database import Database
 from ..database.models import Portal
-from ..database.repositories import MemoryRepository, PortalRepository
+from ..database.repositories import MemoryRepository, PortalRepository, normalize_url
+from ..exceptions import ConfigurationError
 from ..portal.portal_memory import PortalProfile
+from ..storage.atomic import atomic_write_text
 
 log = logging.getLogger("nexfiscal.memory")
 
@@ -69,16 +71,46 @@ class PortalMemoryManager:
                 "seletores": {f"{s}/{k}": v for (s, k), v in self.repo.load_selectors(portal.id).items()},
                 "fluxos": self.repo.load_flows(portal.id), "notas": self.repo.load_notes(portal.id),
             })
-        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), "utf-8")
+        atomic_write_text(path, json.dumps(data, ensure_ascii=False, indent=2))
 
     def import_json(self, path: Path) -> int:
+        """Validate the entire document, then import it as a single transaction."""
+        try:
+            if path.stat().st_size > 8 * 1024 * 1024:
+                raise ValueError("arquivo maior que 8 MiB")
+            data = json.loads(path.read_text("utf-8"))
+            if not isinstance(data, list):
+                raise ValueError("a raiz deve ser uma lista")
+            for item in data:
+                if not isinstance(item, dict):
+                    raise ValueError("cada portal deve ser um objeto")
+                item["url"] = normalize_url(item.get("url", ""))
+                cities = item.get("cidades", [])
+                if not isinstance(cities, list) or not all(isinstance(c, str) and c.strip() for c in cities):
+                    raise ValueError("cidades devem ser textos não vazios")
+                selectors, flows = item.get("seletores", {}), item.get("fluxos", {})
+                if not isinstance(selectors, dict) or not isinstance(flows, dict):
+                    raise ValueError("seletores e fluxos devem ser objetos")
+                for composite, strategies in selectors.items():
+                    if "/" not in composite or not all(composite.split("/", 1)):
+                        raise ValueError("seletor deve ter etapa/chave")
+                    if not isinstance(strategies, list) or not all(
+                        isinstance(s, dict) and isinstance(s.get("type"), str) for s in strategies
+                    ):
+                        raise ValueError("estratégias de seletor inválidas")
+                if not all(isinstance(steps, list) and all(isinstance(s, str) for s in steps)
+                           for steps in flows.values()):
+                    raise ValueError("fluxos devem conter listas de textos")
+        except (OSError, ValueError, TypeError, AttributeError) as exc:
+            raise ConfigurationError(f"Arquivo de memória inválido ou ilegível: {path}.") from exc
         count = 0
-        for item in json.loads(path.read_text("utf-8")):
-            portal = self.portals.register(item.get("cidades", []), item["url"])
-            for composite, strategies in item.get("seletores", {}).items():
-                stage, key = composite.split("/", 1)
-                self.repo.save_selector(portal.id, stage, key, strategies)
-            for name, steps in item.get("fluxos", {}).items():
-                self.repo.save_flow(portal.id, name, steps)
-            count += 1
+        with self.db.transaction():
+            for item in data:
+                portal = self.portals.register(item.get("cidades", []), item["url"])
+                for composite, strategies in item.get("seletores", {}).items():
+                    stage, key = composite.split("/", 1)
+                    self.repo.save_selector(portal.id, stage, key, strategies)
+                for name, steps in item.get("fluxos", {}).items():
+                    self.repo.save_flow(portal.id, name, steps)
+                count += 1
         return count

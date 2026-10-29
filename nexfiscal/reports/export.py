@@ -11,6 +11,7 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
 from .report_generator import Report
+from ..storage.atomic import atomic_output
 
 def _safe_csv_cell(value):
     """Neutralize spreadsheet formula injection in untrusted textual report fields."""
@@ -56,6 +57,12 @@ def to_xlsx(rep: Report, path: Path) -> Path:
     cities.append(["Cidade", "Empresas", "Concluídas", "Pendências", "Erros"])
     for c in rep.cities:
         cities.append([c.city, c.empresas, c.concluidas, c.pendencias, c.erros])
+    # Explicit text cells preserve the source text and prevent Excel from executing it.
+    for sheet in wb:
+        for cells in sheet:
+            for cell in cells:
+                if isinstance(cell.value, str):
+                    cell.data_type = "s"
     wb.save(path)
     return path
 
@@ -75,10 +82,9 @@ def to_pdf(rep: Report, path: Path) -> Path:
 
 def export(rep: Report, path: Path) -> Path:
     ext = path.suffix.lower()
-    if ext == ".csv":
-        return to_csv(rep, path)
-    if ext == ".xlsx":
-        return to_xlsx(rep, path)
-    if ext == ".pdf":
-        return to_pdf(rep, path)
-    raise ValueError("Formato não suportado (use .xlsx, .csv ou .pdf).")
+    writers = {".csv": to_csv, ".xlsx": to_xlsx, ".pdf": to_pdf}
+    if ext not in writers:
+        raise ValueError("Formato não suportado (use .xlsx, .csv ou .pdf).")
+    with atomic_output(path) as temporary:
+        writers[ext](rep, temporary)
+    return path

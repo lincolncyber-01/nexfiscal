@@ -16,7 +16,7 @@ from ..browser.page_manager import PageManager
 from ..config import portal_config as pc
 from ..config.settings import Settings
 from ..events import CompanyReporter
-from ..exceptions import (DownloadError, InvalidFileError, NexFiscalError, SessionExpiredError,
+from ..exceptions import (InvalidFileError, NexFiscalError, SessionExpiredError,
                           TemporaryError)
 from ..portal.selector_engine import SelectorEngine
 from ..storage.file_manager import detect_kind, ensure_dir, move_atomic, read_head, sha256_file

@@ -1,5 +1,8 @@
 name: Build Windows
+permissions:
+  contents: read
 on:
+  pull_request:
   workflow_dispatch:
   push:
     branches: [main]
@@ -15,7 +18,18 @@ jobs:
           python-version: "3.12"
       - name: Instalar dependencias
         timeout-minutes: 10
-        run: pip install -r requirements.txt pyinstaller
+        run: python -m pip install --upgrade pip==26.2.2
+      - name: Instalar ferramentas de build e validacao
+        timeout-minutes: 10
+        run: python -m pip install -r requirements-build.txt
+      - name: Validar dependencias e testes antes do empacotamento
+        run: |
+          python -m pip check
+          if ($LASTEXITCODE -ne 0) { throw 'Dependencias incompatíveis' }
+          python -m pip_audit --format json --output dependency-audit.json
+          if ($LASTEXITCODE -ne 0) { throw 'Auditoria de dependencias falhou' }
+          python -m pytest --junitxml=test-results.xml
+          if ($LASTEXITCODE -ne 0) { throw 'Testes falharam' }
       - name: Instalar navegadores do Playwright
         timeout-minutes: 15
         env:
@@ -36,25 +50,32 @@ jobs:
         timeout-minutes: 10
         shell: pwsh
         run: Compress-Archive -Path dist\NexFiscal -DestinationPath NexFiscal-Windows.zip
-      - uses: actions/upload-artifact@v4
-        with:
-          name: NexFiscal-Windows
-          path: NexFiscal-Windows.zip
-          retention-days: 14
-      - name: Diagnostico - abrir o executavel (apos entregar o zip)
+      - name: Validar executavel antes de entregar o zip
         timeout-minutes: 3
-        continue-on-error: true
         shell: pwsh
         run: |
           $p = Start-Process -FilePath "dist\NexFiscal\NexFiscal.exe" -ArgumentList "--version" -PassThru
           if (-not $p.WaitForExit(40000)) {
             Write-Output "TRAVOU: o executavel nao terminou em 40 segundos"
             $p.Kill()
+            throw 'Executavel nao terminou em 40 segundos'
           } else {
             Write-Output "Codigo de saida: $($p.ExitCode)"
+            if ($p.ExitCode -ne 0) { throw 'Executavel retornou erro' }
           }
           $d = Join-Path $env:USERPROFILE ".nexfiscal\logs"
           foreach ($f in "crash.log", "stdio.log") {
             $path = Join-Path $d $f
             if (Test-Path $path) { Write-Output "=== $f ==="; Get-Content $path -Tail 40 }
           }
+      - name: Registrar dependencias do pacote
+        run: python -m pip freeze --all > resolved-dependencies.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NexFiscal-Windows
+          path: |
+            NexFiscal-Windows.zip
+            resolved-dependencies.txt
+            dependency-audit.json
+            test-results.xml
+          retention-days: 14

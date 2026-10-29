@@ -32,7 +32,7 @@ from ..database.models import CompanyRow, CompanyRun, Portal, RunStatus, Stage, 
 from ..database.repositories import ExecutionRepository
 from ..dates import Period
 from ..events import CompanyReporter, RunControl
-from ..exceptions import (CancelledError, ConfigurationError, DownloadError, InvalidFileError,
+from ..exceptions import (CancelledError, DownloadError, InvalidFileError,
                           NetworkError, NexFiscalError, SessionExpiredError,
                           StageUnavailableError, TemporaryError)
 from ..fiscal_book.downloader import LivroFileStore
@@ -118,6 +118,8 @@ class CompanyWorkflow:
     # --------------------------------------------------------------- helpers ---
     def _set(self, stage: Stage, status: StepStatus, msg: str = "") -> None:
         self.steps[stage.value] = status.value
+        log.info("Etapa %s: %s | %s", stage.title, status.value, msg,
+                 extra={"event": "stage_updated", "stage": stage.value, "status": status.value})
         self.reporter.stage(stage, status, msg)
 
     def _log(self, stage: Stage, status: str, msg: str = "", file: str = "", err: str = "") -> None:
@@ -594,11 +596,14 @@ class CompanyWorkflow:
     def _backoff(self, label: str, n: int, why: str) -> None:
         log.warning("%s: tentativa %d/%d falhou (%s). Nova tentativa em instantes.",
                     label, n, self.settings.max_retries, why)
-        time.sleep(min(2 ** n, 10))
+        if self.control:
+            self.control.wait(min(2 ** n, 10))
+        else:
+            time.sleep(min(2 ** n, 10))
         try:
             self._goto_home()
         except NexFiscalError:
-            pass
+            log.warning("Não foi possível recuperar a página inicial antes da nova tentativa.", exc_info=True)
 
     # ----------------------------------------------------------------- etapas ---
     def _xml_flow(self, paths_xml: Path, out: CompanyResult) -> None:
@@ -767,12 +772,14 @@ class CompanyWorkflow:
             })
             self._set(Stage.ORGANIZACAO, StepStatus.OK)
         except Exception as exc:  # pragma: no cover
+            log.exception("Falha ao gravar manifesto da empresa.")
             self._set(Stage.ORGANIZACAO, StepStatus.ERRO, friendly_error(exc))
+            problems.append(f"Organização: {friendly_error(exc)}")
 
         # --------------------------------------------------------- resultado ---
         if xml_state == "fail" and livro_state in ("fail", "unavailable"):
             out.status = RunStatus.ERRO
-        elif xml_state in ("fail", "partial") or livro_state in ("fail", "unavailable"):
+        elif problems or xml_state in ("fail", "partial") or livro_state in ("fail", "unavailable"):
             out.status = RunStatus.CONCLUIDO_COM_PENDENCIA
         else:
             out.status = RunStatus.CONCLUIDO

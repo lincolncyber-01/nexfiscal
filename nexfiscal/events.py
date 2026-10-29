@@ -115,6 +115,16 @@ class RunControl:
         if self._cancelled.is_set():
             raise CancelledError("Processamento cancelado pelo usuário.")
 
+    def wait(self, seconds: float) -> None:
+        """Interruptible retry delay; pausing and cancelling use the same control path."""
+        deadline = time.monotonic() + seconds
+        while True:
+            self.checkpoint()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            self._cancelled.wait(min(remaining, 0.2))
+
 
 class CompanyReporter:
     """Atalho para emitir eventos de uma empresa específica."""

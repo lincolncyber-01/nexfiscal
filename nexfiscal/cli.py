@@ -80,10 +80,12 @@ def cmd_maint(ctx: AppContext, a: argparse.Namespace) -> int:
     if a.cmd == "clear-credentials":
         n = CompanyRepository(ctx.db, ctx.cipher).clear_credentials()
         print(f"{n} credencial(is) removida(s).")
-    else:
+    elif a.cmd == "clear-memory":
         from .memory.portal_memory_manager import PortalMemoryManager
         PortalMemoryManager(ctx.db).clear()
         print("Memória dos portais limpa.")
+    else:
+        raise ValueError(f"Comando de manutenção desconhecido: {a.cmd}")
     return 0
 
 
@@ -134,8 +136,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd in (None, "gui"):
         from .ui.main_window import run_gui
         return run_gui()
-    ctx = bootstrap()
+    ctx = None
     try:
+        ctx = bootstrap()
+        if args.cmd == "learn":
+            from .portal.guided_learning_session import run_guided_learning
+            run_guided_learning(ctx.db, ctx.settings, args.cidade, args.url)
+            return 0
         if args.cmd == "run":
             return cmd_run(ctx, args)
         if args.cmd == "portal":
@@ -148,9 +155,15 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_maint(ctx, args)
     except NexFiscalError as exc:
         logging.getLogger("nexfiscal").error("%s", exc.message)
+        print(exc.message, file=sys.stderr)
         return 2
+    except Exception:
+        logging.getLogger("nexfiscal").exception("Falha inesperada no comando %s", args.cmd)
+        print("Falha ao executar o comando. Consulte os logs para diagnóstico.", file=sys.stderr)
+        return 1
     except KeyboardInterrupt:
         print("\nInterrompido. Use 'nexfiscal run' sem --planilha para retomar.")
         return 130
     finally:
-        ctx.db.close()
+        if ctx is not None:
+            ctx.db.close()

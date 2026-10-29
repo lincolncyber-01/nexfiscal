@@ -2,19 +2,18 @@
 from __future__ import annotations
 
 import logging
-import time
 import uuid
 from dataclasses import dataclass, field
 
 from .browser.browser_manager import BrowserManager
 from .config.settings import Settings
 from .database.database import Database
-from .database.models import CompanyRow, CompanyRun, RunStatus, Stage, StepStatus
+from .database.models import CompanyRow, CompanyRun, RunStatus, Stage
 from .database.repositories import CompanyRepository, ExecutionRepository
 from .dates import Period
 from .events import CompanyReporter, EventBus, EventKind, ProgressEvent, RunControl
-from .exceptions import CancelledError, ConfigurationError, NexFiscalError, PortalNotRegisteredError
-from .logs.logger import SECRETS
+from .exceptions import CancelledError, ConfigurationError, NexFiscalError
+from .logs.logger import SECRETS, log_context
 from .memory.portal_memory_manager import PortalMemoryManager
 from .portal.portal_registry import PortalRegistry
 from .portal.workflow_engine import CompanyResult, CompanyWorkflow, friendly_error
@@ -46,12 +45,26 @@ class BatchRunner:
     # ------------------------------------------------------------------ API ---
     def run(self, rows: list[CompanyRow], period: Period, *, cities: set[str] | None = None,
             force: bool = False) -> BatchSummary:
+        run_id = uuid.uuid4().hex[:8]
+        with log_context(run_id=run_id, competence=period.competence.label):
+            try:
+                return self._run(rows, period, cities=cities, force=force, run_id=run_id)
+            except Exception as exc:
+                # Diagnose while secret values are still registered; expose only a
+                # redacted domain error after this scope releases the registry.
+                log.exception("Falha ao executar lote.")
+                raise NexFiscalError(friendly_error(exc)) from None
+            finally:
+                # Also cover failures before browser startup (e.g. credential/database I/O).
+                SECRETS.clear()
+
+    def _run(self, rows: list[CompanyRow], period: Period, *, cities: set[str] | None,
+             force: bool, run_id: str) -> BatchSummary:
         """Processa as empresas. ``cities`` = nomes normalizados a processar (None = todas).
 
         Empresas já CONCLUÍDAS na competência são puladas, a menos que ``force`` seja True —
         é isso que permite retomar um lote interrompido.
         """
-        run_id = uuid.uuid4().hex[:8]
         comp = period.competence.label
         selected = [r for r in rows if not cities or r.cidade_norm in cities]
         if any(not r.razao_social.strip() for r in selected):
@@ -118,8 +131,9 @@ class BatchRunner:
                         if force:  # reprocessar do zero: esquece etapas e contadores anteriores
                             run.steps, run.livro_ok = {}, False
                             run.xml_found = run.xml_downloaded = run.xml_existing = run.xml_failed = 0
-                        self._process_company(browser, row, run, profile, portal, period, layout,
-                                              run_id, done, total, city_idx, len(groups))
+                        with log_context(company=row.display, city=row.cidade):
+                            self._process_company(browser, row, run, profile, portal, period, layout,
+                                                  run_id, done, total, city_idx, len(groups))
                         self.memory.save_profile(profile)
                 finally:
                     self.memory.save_profile(profile)
@@ -130,7 +144,6 @@ class BatchRunner:
         finally:
             if browser:
                 browser.stop()
-            SECRETS.clear()
         report = ReportGenerator(self.execs).build(comp, keys)
         self._emit(EventKind.BATCH_END, competence=comp, message=report.to_text())
         return BatchSummary(report, cancelled, keys)
@@ -170,13 +183,13 @@ class BatchRunner:
                     try:
                         ctx.close()
                     except Exception:
-                        pass
+                        log.warning("Falha ao fechar contexto da empresa.", exc_info=True)
             self._apply(run, result)
             if not result.retry_company or attempt == self.settings.max_retries:
                 break
             log.warning("Falha de infraestrutura; nova tentativa %d/%d com navegador limpo.",
                         attempt + 1, self.settings.max_retries)
-            time.sleep(min(2 ** attempt, 10))
+            self.control.wait(min(2 ** attempt, 10))
         assert result is not None
         self.companies.set_status(row.usuario_key, row.cidade_norm, result.status)
         self._log_summary(row, comp, result)

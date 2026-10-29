@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
@@ -15,6 +17,9 @@ from ..portal.guided_action_recorder import GuidedActionRecorder
 from ..portal.portal_registry import PortalRegistry
 from ..database.repositories import normalize_url
 from ..exceptions import ConfigurationError
+from ..storage.atomic import atomic_write_text
+
+log = logging.getLogger("nexfiscal.learning")
 
 
 def _safe_url(url: str) -> str:
@@ -33,7 +38,7 @@ def _receipt_path(settings: Settings, city: str) -> Path:
     folder.mkdir(parents=True, exist_ok=True)
     slug = "".join(c.lower() if c.isalnum() else "-" for c in city).strip("-") or "portal"
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    return folder / f"{slug[:40]}-{stamp}.json"
+    return folder / f"{slug[:40]}-{stamp}-{uuid.uuid4().hex[:8]}.json"
 
 
 def run_guided_learning(db: Database, settings: Settings, city: str, supplied_url: str) -> Path:
@@ -80,10 +85,13 @@ def run_guided_learning(db: Database, settings: Settings, city: str, supplied_ur
 
         # Confere o que foi realmente persistido, relendo o SQLite em vez de confiar no objeto em RAM.
         persisted = memory.load_profile(portal)
+        expected_flows = {name: recorder.serialize([
+            dict(event, order=i) for i, event in enumerate(route_events, 1)
+        ]) for name, route_events in grouped.items()}
         persisted_events = [
             json.loads(item)
             for route, steps in persisted.flows.items()
-            if route.startswith("guided_actions_v1:")
+            if route in expected_flows
             for item in steps
         ]
         expected_hash = hashlib.sha256(json.dumps(
@@ -95,7 +103,8 @@ def run_guided_learning(db: Database, settings: Settings, city: str, supplied_ur
             and bool(event["selector"].get("value"))
             for event in persisted_events
         )
-        saved_ok = bool(persisted_events) and len(persisted_events) == len(events) and selectors_valid
+        saved_ok = (bool(persisted_events) and len(persisted_events) == len(events) and selectors_valid
+                    and all(persisted.flows.get(name) == steps for name, steps in expected_flows.items()))
 
         # Teste prático seguro: uma sessão nova consegue abrir a URL inicial; não reproduz cliques
         # nem ações fiscais, pois podem submeter formulários ou disparar downloads reais.
@@ -110,6 +119,7 @@ def run_guided_learning(db: Database, settings: Settings, city: str, supplied_ur
                 check_ctx.close()
         except Exception as exc:
             smoke_error = type(exc).__name__
+            log.warning("Falha no teste de abertura da URL após aprendizado.", exc_info=True)
 
         receipt = {
             "schema_version": 1,
@@ -131,7 +141,7 @@ def run_guided_learning(db: Database, settings: Settings, city: str, supplied_ur
             ),
         }
         path = _receipt_path(settings, city)
-        path.write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding="utf-8")
+        atomic_write_text(path, json.dumps(receipt, ensure_ascii=False, indent=2))
         print("\nComprovante:", path)
         print("Persistência:", receipt["persistence_check"])
         print("Teste de abertura da URL:", receipt["initial_url_smoke_test"])
@@ -144,5 +154,5 @@ def run_guided_learning(db: Database, settings: Settings, city: str, supplied_ur
             try:
                 ctx.close()
             except Exception:
-                pass
+                log.warning("Falha ao fechar contexto do aprendizado.", exc_info=True)
         browser.stop()
