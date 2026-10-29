@@ -16,11 +16,10 @@ def _safe_csv_cell(value):
     """Neutralize spreadsheet formula injection in untrusted textual report fields."""
     if not isinstance(value, str):
         return value
-    trimmed = value.lstrip(" \\t\\r\\n")
-    if value.startswith(("\\t", "\\r", "\\n")) or (trimmed and trimmed[0] in "=+-@"):
+    trimmed = value.lstrip(" \t\r\n")
+    if value.startswith(("\t", "\r", "\n")) or (trimmed and trimmed[0] in "=+-@"):
         return "'" + value
     return value
-
 
 HEADERS = ["Cidade", "Empresa", "Competência", "Status", "XML encontrados", "XML baixados",
            "XML já existentes", "XML falhas", "Livro Fiscal", "Mensagem"]
