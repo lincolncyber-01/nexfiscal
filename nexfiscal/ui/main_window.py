@@ -24,6 +24,7 @@ from ..spreadsheet.validator import ValidationReport, validate_spreadsheet
 from .dialogs import PortalsDialog, SettingsDialog, TextDialog
 from .worker import BatchWorker
 from .start_policy import force_reprocess_for_start
+from ..program_reset import reset_program as reset_program_state
 
 SYMBOL = {"PENDENTE": "○", "EM_ANDAMENTO": "●", "OK": "✓", "PULADO": "–", "PENDENCIA": "!", "ERRO": "✗"}
 
@@ -70,10 +71,16 @@ class MainWindow(QMainWindow):
         self.status = QLabel("Aguardando início")
         b_all, b_sel = QPushButton("PROCESSAR TODAS"), QPushButton("PROCESSAR SELECIONADAS")
         b_resume, b_cfg = QPushButton("RETOMAR PENDENTES"), QPushButton("CONFIGURAÇÕES")
+        self.b_reset_program = QPushButton("RESETAR PROGRAMA")
+        self.b_reset_program.setToolTip(
+            "Apaga cadastros, credenciais, portais aprendidos e progresso; mantém os arquivos fiscais baixados."
+        )
+        self.b_reset_program.setStyleSheet("font-weight: bold; color: #b00020;")
         b_all.clicked.connect(lambda: self.start(selected_only=False))
         b_sel.clicked.connect(lambda: self.start(selected_only=True))
         b_resume.clicked.connect(lambda: self.start(selected_only=False, from_db=True))
         b_cfg.clicked.connect(self.open_settings)
+        self.b_reset_program.clicked.connect(self.reset_program)
         lay = QVBoxLayout(w)
         lay.addWidget(title)
         for label, edit, btn in (("Planilha:", self.sheet, b_sheet), ("Pasta de saída:", self.out, b_out)):
@@ -91,6 +98,7 @@ class MainWindow(QMainWindow):
         for b in (b_all, b_sel, b_resume, b_cfg):
             row.addWidget(b)
         lay.addLayout(row)
+        lay.addWidget(self.b_reset_program)
         lay.addWidget(QLabel("Status:"))
         lay.addWidget(self.status)
         return w
@@ -358,6 +366,78 @@ class MainWindow(QMainWindow):
         else:
             self.control.pause()
             self.b_pause.setText("CONTINUAR")
+
+    def reset_program(self) -> None:
+        """Reset all local program state after an explicit confirmation."""
+        if self.worker and self.worker.isRunning():
+            QMessageBox.warning(
+                self, "Resetar programa",
+                "Não é possível resetar durante um processamento. Cancele e aguarde o lote terminar."
+            )
+            return
+
+        answer = QMessageBox.warning(
+            self,
+            "Resetar programa",
+            "Esta ação não pode ser desfeita. Serão apagados do banco local:\n\n"
+            "• empresas e credenciais armazenadas;\n"
+            "• portais cadastrados e toda a memória aprendida;\n"
+            "• histórico, progresso e estados das execuções;\n"
+            "• configurações, que voltarão aos valores padrão.\n\n"
+            "XMLs, Livros Fiscais, relatórios exportados e logs existentes NÃO serão apagados.\n\n"
+            "Deseja realmente resetar o programa?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+
+        try:
+            reset_program_state(self.ctx)
+        except Exception as exc:
+            logging.getLogger("nexfiscal.ui").exception("Falha ao resetar o programa.")
+            QMessageBox.critical(
+                self, "Falha no reset",
+                "O reset não foi concluído. Os dados do banco foram protegidos contra limpeza parcial.\n\n"
+                f"Detalhe: {type(exc).__name__}: {exc}"
+            )
+            return
+
+        self.validation = None
+        self.last_summary = None
+        self.last_cities = []
+        self.counts = {"ok": 0, "pend": 0, "err": 0}
+        self.sheet.clear()
+        self.cities.clear()
+        self.out.setText(self.ctx.settings.output_root)
+        self.comp.setText(self.ctx.settings.competence or "")
+        self.force.setChecked(False)
+        self.status.setText("Programa resetado. Selecione uma nova planilha para começar.")
+        self.report_box.clear()
+        self.b_retry.setEnabled(False)
+        self.b_save_memory.setEnabled(False)
+        self.b_save_memory.setText("SALVAR MEMÓRIA DO PORTAL")
+        self.d_city.setText("-")
+        self.d_company.setText("-")
+        self.d_comp.setText("-")
+        self.d_step.setText("-")
+        self.d_progress.setText("")
+        self.log_box.clear()
+        self.total = 0
+        self.counts = {"ok": 0, "pend": 0, "err": 0}
+        self._reset_stages()
+        self._update_counts(0)
+        self.banner.hide()
+        self.b_pause.setText("PAUSAR")
+        self.b_pause.setEnabled(True)
+        self.b_cancel.setEnabled(True)
+        self.status.setText("Programa resetado. Selecione uma nova planilha para começar.")
+        self.stack.setCurrentIndex(0)
+        QMessageBox.information(
+            self, "Reset concluído",
+            "O NexFiscal voltou às configurações padrão. Cadastros, memórias e progresso foram limpos; "
+            "os arquivos fiscais e relatórios existentes foram preservados."
+        )
 
     def cancel(self) -> None:
         if QMessageBox.question(self, "Cancelar", "Cancelar o processamento? O que foi concluído fica salvo.") == QMessageBox.Yes:
